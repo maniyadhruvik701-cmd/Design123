@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design Management</title>
+  <link rel="stylesheet" href="style.css?v=2026-06-05_19">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+  <!-- Firebase Compat SDKs (v10) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+</head>
+<body>
+
+  <!-- Top Navbar (Blue) -->
+  <header class="top-navbar">
+    <div class="nav-left">
+      <button class="icon-btn"><i data-lucide="menu"></i></button>
+      <div class="logo">
+        <i data-lucide="scissors"></i> <!-- Placeholder for logo -->
+        <span style="font-size: 1.1rem; font-weight: 800; letter-spacing: 0.5px;">Design Management</span>
+        <span class="logo-subtext">MADE BY DHRUVIK</span>
+      </div>
+    </div>
+    <div class="nav-right">
+      <button class="icon-btn" style="color: #4ade80;"><i data-lucide="cloud"></i></button>
+      <div class="user-profile">
+        <div class="avatar"><i data-lucide="user"></i></div>
+        <span>User</span>
+      </div>
+      <button class="btn-logout-header" id="logoutBtn" onclick="handleLogout()">
+        <i data-lucide="log-out" style="width: 16px; height: 16px;"></i> Logout
+      </button>
+    </div>
+  </header>
+
+  <div class="app-container">
+    
+    <!-- Left Sidebar -->
+    <aside class="sidebar">
+      <nav class="sidebar-nav">
+        <a href="#" class="sidebar-link active" onclick="switchSection('dashboard'); return false;">
+          <i data-lucide="layout-dashboard"></i> Dashboard
+        </a>
+        <a href="#" class="sidebar-link" onclick="switchSection('add'); return false;">
+          <i data-lucide="plus-circle"></i> Add Design
+        </a>
+        <a href="#" class="sidebar-link" onclick="switchSection('pending'); return false;">
+          <i data-lucide="clock"></i> Pending
+        </a>
+        <a href="#" class="sidebar-link" onclick="switchSection('completed'); return false;">
+          <i data-lucide="check-circle"></i> Completed
+        </a>
+        <a href="#" class="sidebar-link" onclick="switchSection('stockin'); return false;">
+          <i data-lucide="trending-up"></i> Stock In
+        </a>
+        <a href="#" class="sidebar-link" onclick="switchSection('stockout'); return false;">
+          <i data-lucide="trending-down"></i> Stock Out
+        </a>
+        <a href="#" class="sidebar-link" onclick="switchSection('platforms'); return false;">
+          <i data-lucide="layers"></i> Platforms
+        </a>
+      </nav>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+
+      <!-- DASHBOARD SECTION -->
+      <section id="section-dashboard" class="dashboard-section section-content">
+        <h2 class="section-title">
+          <i data-lucide="layout-dashboard" style="color: var(--accent-primary);"></i> Dashboard
+        </h2>
+        <div class="dashboard-stats-grid">
+          <div class="stat-card pending-stat-card" onclick="switchSection('pending')">
+            <div class="stat-icon-wrapper pending-icon">
+              <i data-lucide="clock"></i>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="pendingCount">0</div>
+              <div class="stat-label">Pending Designs</div>
+            </div>
+          </div>
+
+          <div class="stat-card completed-stat-card" onclick="switchSection('completed')">
+            <div class="stat-icon-wrapper completed-icon">
+              <i data-lucide="check-circle"></i>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="completedCount">0</div>
+              <div class="stat-label">Completed Designs</div>
+            </div>
+          </div>
+
+          <div class="stat-card stockout-stat-card" onclick="switchSection('stockout')">
+            <div class="stat-icon-wrapper stockout-icon" style="background-color: #fee2e2; color: #ef4444;">
+              <i data-lucide="trending-down"></i>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="stockOutCount">0</div>
+              <div class="stat-label">Stock Out Designs</div>
+            </div>
+          </div>
+
+          <div class="stat-card stockin-stat-card" onclick="switchSection('stockin')">
+            <div class="stat-icon-wrapper stockin-icon" style="background-color: #dcfce7; color: #10b981;">
+              <i data-lucide="trending-up"></i>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="stockInCount">0</div>
+              <div class="stat-label">Stock In Designs</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PENDING SECTION -->
+      <section id="section-pending" class="dashboard-section section-content" style="display: none;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+          <h2 class="section-title" style="margin-bottom: 0;">
+             <i data-lucide="shirt" style="color: var(--accent-primary);"></i> Designs (Pending)
+          </h2>
+        </div>
+        
+        <input type="text" id="searchPending" class="search-bar" placeholder="Search Designs...">
+        
+        <div id="pendingEmptyState" class="empty-state" style="display: none;">
+          No pending designs. Add one above!
+        </div>
+
+        <div id="pendingGrid" class="design-grid">
+          <!-- Pending cards will be injected here -->
+        </div>
+      </section>
+
+      <!-- COMPLETED SECTION -->
+      <section id="section-completed" class="dashboard-section section-content" style="display: none;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+          <h2 class="section-title" style="margin-bottom: 0;">
+            <i data-lucide="check-circle" style="color: #10b981;"></i> Completed Designs
+          </h2>
+        </div>
+        
+        <input type="text" id="searchCompleted" class="search-bar" placeholder="Search Completed Designs...">
+        
+        <div id="completedEmptyState" class="empty-state" style="display: none;">
+          No completed designs yet.
+        </div>
+
+        <div id="completedGrid" class="design-grid">
+          <!-- Completed cards will be injected here -->
+        </div>
+      </section>
+
+      <!-- STOCK IN SECTION -->
+      <section id="section-stockin" class="dashboard-section section-content" style="display: none;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+          <h2 class="section-title" style="margin-bottom: 0;">
+            <i data-lucide="trending-up" style="color: #10b981;"></i> Stock In Designs
+          </h2>
+        </div>
+        <input type="text" id="searchStockIn" class="search-bar" placeholder="Search Stock In Designs...">
+        <div id="stockInEmptyState" class="empty-state" style="display: none;">
+          No stock in designs yet.
+        </div>
+        <div id="stockInGrid" class="design-grid">
+          <!-- Stock In cards injected by JS -->
+        </div>
+      </section>
+
+      <!-- STOCK OUT SECTION -->
+      <section id="section-stockout" class="dashboard-section section-content" style="display: none;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+          <h2 class="section-title" style="margin-bottom: 0;">
+            <i data-lucide="trending-down" style="color: #ef4444;"></i> Stock Out Designs
+          </h2>
+        </div>
+        <input type="text" id="searchStockOut" class="search-bar" placeholder="Search Stock Out Designs...">
+        <div id="stockOutEmptyState" class="empty-state" style="display: none;">
+          No stock out designs yet.
+        </div>
+        <div id="stockOutGrid" class="design-grid">
+          <!-- Stock Out cards injected by JS -->
+        </div>
+      </section>
+
+      <!-- PLATFORMS SECTION -->
+      <section id="section-platforms" class="dashboard-section section-content" style="display: none;">
+        <h2 class="section-title">
+          <i data-lucide="layers" style="color: var(--accent-primary);"></i> Manage Platforms
+        </h2>
+        <div class="fancy-card" style="max-width: 600px;">
+          <div style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+            <input type="text" id="newPlatformInput" class="material-input" placeholder="E.g., Flipkart" style="margin-bottom: 0;">
+            <button class="btn btn-primary" onclick="addPlatform()" style="white-space: nowrap;">
+              <i data-lucide="plus"></i> Add Platform
+            </button>
+          </div>
+          
+          <div id="platformsList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <!-- Platform items will be injected here -->
+          </div>
+        </div>
+
+        <div class="fancy-card" style="max-width: 600px; margin-top: 2rem; border-color: #fca5a5;">
+          <h3 style="color: #ef4444; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i data-lucide="alert-triangle" style="width: 20px; height: 20px;"></i> System Reset
+          </h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">This will permanently delete all designs and platforms records. This action cannot be undone.</p>
+          <button class="btn" id="clearDataBtn" style="background: #ef4444; color: white;">
+            <i data-lucide="trash-2"></i> Clear All Data
+          </button>
+        </div>
+      </section>
+
+      <!-- USER PERMISSIONS SECTION -->
+      <section id="section-users" class="dashboard-section section-content" style="display: none;">
+        <h2 class="section-title">
+          <i data-lucide="shield-check" style="color: var(--accent-primary);"></i> User Permissions
+        </h2>
+        <div id="usersListContainer" style="display: flex; flex-direction: column; gap: 1.5rem; max-width: 1000px;">
+          <!-- Dynamic users list injected by JS -->
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Login Screen Overlay -->
+  <div id="loginScreen" class="login-screen-overlay">
+    <!-- Glowing background patterns -->
+    <div class="login-bg-glow glow-1"></div>
+    <div class="login-bg-glow glow-2"></div>
+    
+    <div class="login-card">
+      <div class="login-header" style="text-align: center; margin-bottom: 2rem;">
+        <i data-lucide="lock" style="width: 48px; height: 48px; color: var(--accent-primary); margin-bottom: 1rem; display: inline-block;"></i>
+        <h2 class="section-title" style="justify-content: center; margin-bottom: 0.5rem;">Sign In</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Select your username and enter your PIN</p>
+      </div>
+      <div class="login-body">
+        <input type="hidden" id="loginUserSelect" value="">
+        <div class="user-avatar-grid-label" style="font-size: 0.85rem; color: var(--accent-primary); font-weight: 700; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.5px; text-align: center;">Select Account</div>
+        <div class="user-avatar-grid">
+          <div class="avatar-item" data-username="vishal">
+            <div class="avatar-circle admin-avatar">
+              <i data-lucide="shield"></i>
+            </div>
+            <span class="avatar-label">vishal</span>
+          </div>
+          <div class="avatar-item" data-username="piyush">
+            <div class="avatar-circle admin-avatar">
+              <i data-lucide="user-check"></i>
+            </div>
+            <span class="avatar-label">piyush</span>
+          </div>
+          <div class="avatar-item" data-username="portal">
+            <div class="avatar-circle portal-avatar">
+              <i data-lucide="monitor"></i>
+            </div>
+            <span class="avatar-label">portal</span>
+          </div>
+          <div class="avatar-item" data-username="vender">
+            <div class="avatar-circle vendor-avatar">
+              <i data-lucide="truck"></i>
+            </div>
+            <span class="avatar-label">vender</span>
+          </div>
+          <div class="avatar-item" data-username="b2b">
+            <div class="avatar-circle b2b-avatar">
+              <i data-lucide="briefcase"></i>
+            </div>
+            <span class="avatar-label">b2b</span>
+          </div>
+          <div class="avatar-item" data-username="shop">
+            <div class="avatar-circle shop-avatar">
+              <i data-lucide="store"></i>
+            </div>
+            <span class="avatar-label">shop</span>
+          </div>
+          <div class="avatar-item" data-username="website">
+            <div class="avatar-circle web-avatar">
+              <i data-lucide="globe"></i>
+            </div>
+            <span class="avatar-label">website</span>
+          </div>
+          <div class="avatar-item" data-username="bholo">
+            <div class="avatar-circle bholo-avatar">
+              <i data-lucide="user"></i>
+            </div>
+            <span class="avatar-label">bholo</span>
+          </div>
+        </div>
+        <div class="material-input-group" style="margin-bottom: 2rem;">
+          <input type="password" id="loginPinInput" class="material-input" placeholder="Enter PIN" maxlength="4" style="text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem;">
+          <label class="material-label active">PIN Code</label>
+        </div>
+        <div id="loginErrorMessage" style="color: #ef4444; font-size: 0.9rem; font-weight: 600; text-align: center; margin-bottom: 1.5rem; display: none;">
+          Incorrect PIN! Please try again.
+        </div>
+        <button onclick="handleLoginSubmit()" class="btn btn-primary" style="width: 100%; padding: 0.75rem; font-size: 1rem; border-radius: 8px;">
+          <i data-lucide="log-in" style="width: 20px; height: 20px;"></i> SIGN IN
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="addDesignModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle" class="section-title" style="margin-bottom: 0;">Add New Design</h2>
+        <button class="btn-close" onclick="closeAddModal()">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      
+      <div class="add-design-wrapper">
+        <div class="add-design-grid">
+          
+          <div class="image-preview-card" id="imagePreviewContainer">
+            <div class="empty-preview" id="emptyPreviewIcon">
+              <i data-lucide="shirt" style="width: 64px; height: 64px; opacity: 0.5; color: #b0bec5;"></i>
+              <span>Image Preview</span>
+            </div>
+            <img id="imagePreview" src="" alt="Preview" class="preview-img" style="display: none;">
+          </div>
+
+          <form id="addDesignForm" class="fancy-form">
+            <input type="hidden" id="editDesignId">
+            <div class="form-row">
+              <div class="material-input-group" style="width: 100%;">
+                <input type="text" id="sku" class="material-input" required>
+                <label class="material-label" for="sku">Design Name/Number*</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="material-input-group">
+                <input type="file" id="photo" class="material-input" accept="image/*" required style="padding-top: 1rem;">
+                <label class="material-label active" for="photo">Upload Photo*</label>
+              </div>
+              <div class="material-input-group" id="platformCheckboxesGroup" style="margin-bottom: 2rem;">
+                <label class="material-label active" style="position: static; margin-bottom: 0.5rem; display: block;">Select Platforms (Check all that apply)*</label>
+                <div id="platformCheckboxes" style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem;">
+                  <!-- Checkboxes injected by JS -->
+                </div>
+              </div>
+            </div>
+            
+            <div class="material-input-group" id="editPlatformGroup" style="display: none; margin-bottom: 2rem;">
+              <select id="editPlatformSelect" class="material-input">
+                <!-- Options injected by JS -->
+              </select>
+              <label class="material-label active">Platform</label>
+            </div>
+
+            <div class="material-input-group" style="margin-bottom: 1rem;">
+              <textarea id="description" class="material-input"></textarea>
+              <label class="material-label" for="description">Description</label>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+              <i data-lucide="save" style="width: 20px; height: 20px;"></i>
+              SAVE DESIGN
+            </button>
+          </form>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Platform Details Modal -->
+  <div id="platformDetailsModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2 class="section-title" style="margin-bottom: 0;">Platform Details</h2>
+        <button class="btn-close" onclick="closePlatformDetailsModal()">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div style="margin-top: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem;">
+        <img id="detailPreviewImage" src="" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-color);" />
+        <div>
+          <div id="detailSku" style="font-weight: 700; font-size: 1.1rem;"></div>
+          <div id="detailPrice" style="color: var(--text-muted); font-size: 0.9rem;"></div>
+        </div>
+      </div>
+      <div id="platformDetailsList" style="display: flex; flex-direction: column; gap: 1rem;">
+        <!-- Injected by JS -->
+      </div>
+      <div style="margin-top: 1.5rem; text-align: right;">
+        <button class="btn btn-primary" onclick="closePlatformDetailsModal()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Platforms Assignment Modal -->
+  <div id="userPlatformsModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2 id="userPlatformsModalTitle" class="section-title" style="margin-bottom: 0;">Manage Platforms</h2>
+        <button class="btn-close" onclick="closeUserPlatformsModal()">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div style="margin-top: 1rem; margin-bottom: 1.5rem;">
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Select which platforms this user can access:</p>
+        <div id="userPlatformsList" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 300px; overflow-y: auto;">
+          <!-- Checkboxes injected by JS -->
+        </div>
+      </div>
+      <div style="text-align: right; display: flex; gap: 0.5rem; justify-content: flex-end;">
+        <button class="btn" onclick="closeUserPlatformsModal()" style="background: #f1f5f9; color: #475569;">Cancel</button>
+        <button class="btn btn-primary" onclick="saveUserPlatformsAssignment()">Save Platforms</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stock Status Selector Modal -->
+  <div id="stockStatusModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 400px; text-align: center; padding: 2.5rem;">
+      <div class="modal-header" style="justify-content: center; border-bottom: none; margin-bottom: 1rem; padding-bottom: 0;">
+        <h2 class="section-title" style="margin-bottom: 0;">Select Stock Status</h2>
+      </div>
+      <p style="color: var(--text-muted); margin-bottom: 2rem;">Choose whether this design is in stock or out of stock.</p>
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        <button class="btn btn-primary" onclick="setDesignStockStatus('in')" style="background-color: #10b981; padding: 1rem; border-radius: 8px; font-weight: 700; width: 100%;">
+          <i data-lucide="trending-up" style="width: 20px; height: 20px; display: inline; vertical-align: middle;"></i> STOCK IN
+        </button>
+        <button class="btn btn-primary" onclick="setDesignStockStatus('out')" style="background-color: #ef4444; padding: 1rem; border-radius: 8px; font-weight: 700; width: 100%;">
+          <i data-lucide="trending-down" style="width: 20px; height: 20px; display: inline; vertical-align: middle;"></i> STOCK OUT
+        </button>
+        <button class="btn" onclick="setDesignStockStatus('none')" style="background-color: #f1f5f9; color: #475569; padding: 1rem; border-radius: 8px; font-weight: 700; width: 100%; border: 1px solid var(--border-color);">
+          CLEAR STATUS (Back to Completed)
+        </button>
+        <button class="btn" onclick="closeStockStatusModal()" style="background: transparent; color: var(--text-muted); padding: 0.5rem; margin-top: 0.5rem; width: 100%; border: 1px solid var(--border-color);">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js?v=2026-06-05_22"></script>
+</body>
+</html>
