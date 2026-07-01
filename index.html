@@ -14,6 +14,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+  <!-- SheetJS for Excel export -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -126,6 +128,9 @@
           <h2 class="section-title" style="margin-bottom: 0;">
              <i data-lucide="shirt" style="color: var(--accent-primary);"></i> Designs (Pending)
           </h2>
+          <button class="btn btn-primary" onclick="exportPendingToExcel()" style="background-color: #10b981; color: white;">
+            <i data-lucide="download"></i> Export Excel
+          </button>
         </div>
         
         <input type="text" id="searchPending" class="search-bar" placeholder="Search Designs...">
