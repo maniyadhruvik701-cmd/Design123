@@ -954,7 +954,7 @@ window.openPlatformDetails = function(id) {
   
   const isPlatformUser = currentUser && currentUser.role === 'platform';
   const filteredPlatforms = isPlatformUser 
-    ? design.platforms.filter(p => currentUser.permissions.platforms.includes(p.name)) 
+    ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name)) 
     : design.platforms;
 
   if (filteredPlatforms.length === 0) {
@@ -1115,7 +1115,7 @@ function renderGrids() {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
     if (isPlatformUser) {
-      return d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'pending') && matchesSearch;
+      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'pending') && matchesSearch;
     } else {
       return d.platforms.some(p => p.status === 'pending') && matchesSearch;
     }
@@ -1125,7 +1125,7 @@ function renderGrids() {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
     if (isPlatformUser) {
-      return d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'completed') && matchesSearch;
+      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') && matchesSearch;
     } else {
       return d.platforms.some(p => p.status === 'completed') && matchesSearch;
     }
@@ -1135,7 +1135,7 @@ function renderGrids() {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(stockOutTerm) || d.description.toLowerCase().includes(stockOutTerm);
     const hasCompletedPlatform = isPlatformUser
-      ? d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'completed')
+      ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed')
       : d.platforms.some(p => p.status === 'completed');
     return hasCompletedPlatform && d.stockStatus === 'out' && matchesSearch;
   });
@@ -1144,7 +1144,7 @@ function renderGrids() {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(stockInTerm) || d.description.toLowerCase().includes(stockInTerm);
     const hasCompletedPlatform = isPlatformUser
-      ? d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'completed')
+      ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed')
       : d.platforms.some(p => p.status === 'completed');
     return hasCompletedPlatform && d.stockStatus === 'in' && matchesSearch;
   });
@@ -1152,22 +1152,22 @@ function renderGrids() {
   // Calculate stats counts based on role (not search filter)
   const totalPending = designs.filter(d => 
     d.platforms && 
-    (isPlatformUser ? d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'pending') : d.platforms.some(p => p.status === 'pending'))
+    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'pending') : d.platforms.some(p => p.status === 'pending'))
   ).length;
 
   const totalCompleted = designs.filter(d => 
     d.platforms &&
-    (isPlatformUser ? d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
+    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
   ).length;
 
   const totalStockOut = designs.filter(d => 
     d.platforms && d.stockStatus === 'out' &&
-    (isPlatformUser ? d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
+    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
   ).length;
 
   const totalStockIn = designs.filter(d => 
     d.platforms && d.stockStatus === 'in' &&
-    (isPlatformUser ? d.platforms.some(p => currentUser.permissions.platforms.includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
+    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
   ).length;
 
   const pendingCountEl = document.getElementById('pendingCount');
@@ -1187,7 +1187,7 @@ function renderGrids() {
     pendingEmptyState.style.display = 'none';
     pendingGrid.innerHTML = pending.map(design => {
       const userAssignedPlats = isPlatformUser 
-        ? design.platforms.filter(p => currentUser.permissions.platforms.includes(p.name))
+        ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
         : design.platforms;
       const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
 
@@ -1215,7 +1215,7 @@ function renderGrids() {
               </div>
             </div>
             <div class="design-platform" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
-              Platforms: <span style="font-weight: 600; color: var(--text-color);">${userAssignedPlats.map(p => p.name).join(', ')}</span><br/>
+              Platforms: <span style="font-weight: 600; color: var(--text-color);">${userAssignedPlats.filter(p => p.status === 'pending').map(p => p.name).join(', ')}</span><br/>
               <span style="color: ${userCompletedPlats.length > 0 ? 'var(--accent-primary)' : 'inherit'};">
                 (${userCompletedPlats.length}/${userAssignedPlats.length} Completed)
               </span>
@@ -1238,7 +1238,7 @@ function renderGrids() {
     completedEmptyState.style.display = 'none';
     completedGrid.innerHTML = completed.map(design => {
       const userAssignedPlats = isPlatformUser 
-        ? design.platforms.filter(p => currentUser.permissions.platforms.includes(p.name))
+        ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
         : design.platforms;
       const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
       const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
@@ -1266,6 +1266,9 @@ function renderGrids() {
               </div>
               <div style="display: flex; gap: 0.25rem;">
                 ${isPlatformUser ? '' : `
+                  <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
+                    <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
+                  </button>
                   <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
                     <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
                   </button>
@@ -1279,6 +1282,9 @@ function renderGrids() {
               </span>
             </div>
           </div>
+          <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
+            ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
+          </button>
         </div>
       `;
     }).join('');
@@ -1293,7 +1299,7 @@ function renderGrids() {
     if (stockOutGrid) {
       stockOutGrid.innerHTML = stockOut.map(design => {
         const userAssignedPlats = isPlatformUser 
-          ? design.platforms.filter(p => currentUser.permissions.platforms.includes(p.name))
+          ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
           : design.platforms;
         const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
         const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
@@ -1320,6 +1326,9 @@ function renderGrids() {
                 </div>
                 <div style="display: flex; gap: 0.25rem;">
                   ${isPlatformUser ? '' : `
+                    <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
+                      <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
+                    </button>
                     <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
                       <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
                     </button>
@@ -1333,6 +1342,9 @@ function renderGrids() {
                 </span>
               </div>
             </div>
+            <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
+              ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
+            </button>
           </div>
         `;
       }).join('');
@@ -1348,7 +1360,7 @@ function renderGrids() {
     if (stockInGrid) {
       stockInGrid.innerHTML = stockIn.map(design => {
         const userAssignedPlats = isPlatformUser 
-          ? design.platforms.filter(p => currentUser.permissions.platforms.includes(p.name))
+          ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
           : design.platforms;
         const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
         const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
@@ -1375,6 +1387,9 @@ function renderGrids() {
                 </div>
                 <div style="display: flex; gap: 0.25rem;">
                   ${isPlatformUser ? '' : `
+                    <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
+                      <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
+                    </button>
                     <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
                       <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
                     </button>
@@ -1388,6 +1403,9 @@ function renderGrids() {
                 </span>
               </div>
             </div>
+            <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
+              ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
+            </button>
           </div>
         `;
       }).join('');
@@ -1488,3 +1506,54 @@ async function initApp() {
 
 // Start App
 initApp();
+
+// Export Pending Designs to Excel
+window.exportPendingToExcel = function() {
+  if (typeof XLSX === 'undefined') {
+    alert("Excel library is still loading or failed to load. Please try again in a moment.");
+    return;
+  }
+
+  const pendingTerm = searchPending.value.toLowerCase();
+  const isPlatformUser = currentUser && currentUser.role === 'platform';
+
+  const pending = designs.filter(d => {
+    if (!d.platforms) return false;
+    const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
+    if (isPlatformUser) {
+      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'pending') && matchesSearch;
+    } else {
+      return d.platforms.some(p => p.status === 'pending') && matchesSearch;
+    }
+  });
+
+  const data = [];
+  pending.forEach(d => {
+    let relevantPlatforms = d.platforms;
+    if (isPlatformUser) {
+      relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
+    }
+    
+    // Create a row object starting with the Design ID
+    const row = {
+      "Design Name / No.": d.sku
+    };
+
+    // Add each platform as a separate column, and its value as the price
+    relevantPlatforms.forEach(p => {
+      row[p.name] = p.price || 0;
+    });
+
+    data.push(row);
+  });
+
+  if (data.length === 0) {
+    alert('No pending designs to export.');
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Pending Designs");
+  XLSX.writeFile(wb, "Pending_Designs.xlsx");
+};
