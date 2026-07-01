@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 export default function Pending() {
   const { designs, markCompleted } = useAppContext();
@@ -12,10 +13,27 @@ export default function Pending() {
     (d.sku.toLowerCase().includes(search.toLowerCase()) || d.description.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const handleExport = () => {
+    const data = pendingDesigns.map(design => ({
+      Design: design.sku,
+      Platform: design.platform,
+      Price: design.price
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Pending Designs");
+    XLSX.writeFile(wb, "Pending_Designs.xlsx");
+  };
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1.5rem' }}>
-        <Link to="/add" className="btn btn-primary" style={{ textDecoration: 'none' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginBottom: '1.5rem' }}>
+        <button onClick={handleExport} className="btn" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#10b981', color: 'white' }}>
+          <Download size={18} />
+          Export Excel
+        </button>
+        <Link to="/add" className="btn btn-primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Plus size={18} />
           Add New Design
         </Link>
