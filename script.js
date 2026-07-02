@@ -1528,13 +1528,15 @@ window.exportPendingToExcel = function() {
   });
 
   const data = [];
+  const notesData = [];
+
   pending.forEach(d => {
     let relevantPlatforms = d.platforms;
     if (isPlatformUser) {
       relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
     }
     
-    // Create a row object starting with the Design ID
+    // Create a row object starting with the Design ID for Sheet 1
     const row = {
       "Design Name / No.": d.sku
     };
@@ -1542,6 +1544,15 @@ window.exportPendingToExcel = function() {
     // Add each platform as a separate column, and its value as the price
     relevantPlatforms.forEach(p => {
       row[p.name] = p.price || 0;
+      
+      // Collect links/notes for Sheet 2
+      if (p.note && p.note.trim() !== '') {
+        notesData.push({
+          "Design Name / No.": d.sku,
+          "Platform": p.name,
+          "Link": p.note
+        });
+      }
     });
 
     data.push(row);
@@ -1552,8 +1563,99 @@ window.exportPendingToExcel = function() {
     return;
   }
 
-  const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Pending Designs");
+
+  // Sheet 1: Prices
+  const ws1 = XLSX.utils.json_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws1, "Pending Designs");
+
+  // Sheet 2: Links/Notes
+  if (notesData.length > 0) {
+    const ws2 = XLSX.utils.json_to_sheet(notesData);
+    XLSX.utils.book_append_sheet(wb, ws2, "Links");
+  } else {
+    // If no links exist, add an empty sheet with headers just in case
+    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": "No links available"}]);
+    XLSX.utils.book_append_sheet(wb, ws2, "Links");
+  }
+
   XLSX.writeFile(wb, "Pending_Designs.xlsx");
+};
+
+// Export Completed Designs to Excel
+window.exportCompletedToExcel = function() {
+  if (typeof XLSX === 'undefined') {
+    alert("Excel library is still loading or failed to load. Please try again in a moment.");
+    return;
+  }
+
+  const completedTerm = searchCompleted.value.toLowerCase();
+  const isPlatformUser = currentUser && currentUser.role === 'platform';
+
+  const completed = designs.filter(d => {
+    if (!d.platforms) return false;
+    const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
+    if (isPlatformUser) {
+      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') && matchesSearch;
+    } else {
+      return d.platforms.some(p => p.status === 'completed') && matchesSearch;
+    }
+  });
+
+  const data = [];
+  const notesData = [];
+
+  completed.forEach(d => {
+    let relevantPlatforms = d.platforms;
+    if (isPlatformUser) {
+      relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
+    }
+    
+    // Only include platforms that are actually completed
+    relevantPlatforms = relevantPlatforms.filter(p => p.status === 'completed');
+    
+    // Create a row object starting with the Design ID for Sheet 1
+    const row = {
+      "Design Name / No.": d.sku
+    };
+
+    // Add each platform as a separate column, and its value as the price
+    relevantPlatforms.forEach(p => {
+      row[p.name] = p.price || 0;
+      
+      // Collect links/notes for Sheet 2
+      if (p.note && p.note.trim() !== '') {
+        notesData.push({
+          "Design Name / No.": d.sku,
+          "Platform": p.name,
+          "Link": p.note
+        });
+      }
+    });
+
+    data.push(row);
+  });
+
+  if (data.length === 0) {
+    alert('No completed designs to export.');
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Prices
+  const ws1 = XLSX.utils.json_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws1, "Completed Designs");
+
+  // Sheet 2: Links/Notes
+  if (notesData.length > 0) {
+    const ws2 = XLSX.utils.json_to_sheet(notesData);
+    XLSX.utils.book_append_sheet(wb, ws2, "Links");
+  } else {
+    // If no links exist, add an empty sheet with headers just in case
+    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": "No links available"}]);
+    XLSX.utils.book_append_sheet(wb, ws2, "Links");
+  }
+
+  XLSX.writeFile(wb, "Completed_Designs.xlsx");
 };
