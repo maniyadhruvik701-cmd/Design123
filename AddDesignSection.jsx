@@ -65,6 +65,7 @@ export default function AddDesignSection() {
             </div>
             <div className="material-input-group">
               <select name="platform" className="material-input" value={formData.platform} onChange={handleChange}>
+                <option value="All Platforms">All Platforms</option>
                 <option value="Shopify">Shopify</option>
                 <option value="Amazon">Amazon</option>
                 <option value="Etsy">Etsy</option>
