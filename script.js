@@ -610,9 +610,18 @@ window.togglePlatformPriceInput = function(platformName, isChecked) {
   const input = document.getElementById(`price_input_${platformName}`);
   if (input) {
     input.disabled = !isChecked;
-    input.required = isChecked;
-    if (!isChecked) input.value = '';
+    input.required = false; // no longer strictly required if we default to 1
   }
+}
+
+window.toggleAllPlatforms = function(isChecked) {
+  const checkboxes = document.querySelectorAll('.platform-checkbox');
+  checkboxes.forEach(cb => {
+    if (cb.checked !== isChecked) {
+      cb.checked = isChecked;
+      togglePlatformPriceInput(cb.value, isChecked);
+    }
+  });
 }
 
 // Form Submission
@@ -659,11 +668,15 @@ addDesignForm.addEventListener('submit', async (e) => {
     const platformsArray = checkedCheckboxes.map(cb => {
       const platformName = cb.value;
       const priceInput = document.getElementById(`price_input_${platformName}`);
+      let finalPrice = priceInput ? priceInput.value : '1';
+      if (!finalPrice || finalPrice.trim() === '' || finalPrice === '0') {
+        finalPrice = '1';
+      }
       return {
         name: platformName,
         status: 'pending',
         note: '',
-        price: priceInput ? priceInput.value : '0'
+        price: finalPrice
       };
     });
 
@@ -821,14 +834,23 @@ function renderPlatformManager() {
 function renderPlatformSelect() {
   const container = document.getElementById('platformCheckboxes');
   if (container) {
-    container.innerHTML = platforms.map(p => `
+    let selectAllHtml = `
+      <div style="width: 100%; display: flex; align-items: center; gap: 1rem; background: #e2e8f0; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 0.5rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; width: 100%;">
+          <input type="checkbox" id="selectAllPlatforms" onchange="toggleAllPlatforms(this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent-primary);">
+          <span style="font-weight: 800; color: #1e293b;">Select All Platforms</span>
+        </label>
+      </div>
+    `;
+
+    container.innerHTML = selectAllHtml + platforms.map(p => `
       <div style="display: flex; align-items: center; gap: 1rem; width: 100%; background: #f8fafc; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border-color);">
         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; min-width: 120px;">
           <input type="checkbox" class="platform-checkbox" value="${p}" onchange="togglePlatformPriceInput('${p}', this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent-primary);">
           <span style="font-weight: 600;">${p}</span>
         </label>
         <div style="flex: 1;">
-          <input type="number" id="price_input_${p}" class="material-input platform-price-input" placeholder="Price (₹)" disabled style="margin-bottom: 0; padding: 0.5rem; font-size: 0.9rem; background: white;">
+          <input type="number" id="price_input_${p}" class="material-input platform-price-input" placeholder="Price (₹)" value="1" disabled style="margin-bottom: 0; padding: 0.5rem; font-size: 0.9rem; background: white;">
         </div>
       </div>
     `).join('');
