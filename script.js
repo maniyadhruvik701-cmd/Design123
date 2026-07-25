@@ -2,6 +2,33 @@
 let designs = [];
 let platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
 
+function sanitizeDesignPlatforms(design) {
+  if (!design) return [];
+  if (!design.platforms) {
+    design.platforms = [];
+  } else if (!Array.isArray(design.platforms)) {
+    if (typeof design.platforms === 'object') {
+      design.platforms = Object.keys(design.platforms).map(k => design.platforms[k]);
+    } else {
+      design.platforms = [];
+    }
+  }
+  return design.platforms;
+}
+
+function sanitizeDesigns(rawDesigns) {
+  if (!rawDesigns) return [];
+  const list = Array.isArray(rawDesigns) 
+    ? rawDesigns 
+    : Object.keys(rawDesigns).map(k => rawDesigns[k]);
+
+  return list.map(d => {
+    d.id = String(d.id || Date.now());
+    sanitizeDesignPlatforms(d);
+    return d;
+  });
+}
+
 const DEFAULT_USERS = [
   { username: 'vishal', pin: '2179', role: 'admin', permissions: { tabs: ['dashboard', 'add', 'pending', 'completed', 'stockin', 'stockout', 'platforms', 'users'], platforms: [] } },
   { username: 'piyush', pin: '2179', role: 'admin', permissions: { tabs: ['dashboard', 'add', 'pending', 'completed', 'stockin', 'stockout', 'platforms', 'users'], platforms: [] } },
@@ -98,17 +125,19 @@ function setupFirebaseListeners() {
   fbDb.ref('designs').once('value').then(snapshot => {
     const data = snapshot.val();
     if (data) {
-      designs = Object.keys(data).map(key => {
+      const rawList = Object.keys(data).map(key => {
         const item = data[key];
         item.id = String(item.id || key);
         return item;
       });
+      designs = sanitizeDesigns(rawList);
       localforage.setItem('designStudioData', designs);
     } else {
       // Firebase has no designs. Upload what we have locally.
       if (designs && designs.length > 0) {
         const dbObject = {};
         designs.forEach(d => {
+          sanitizeDesignPlatforms(d);
           dbObject[d.id] = d;
         });
         fbDb.ref('designs').set(dbObject).catch(err => console.error("Firebase designs init write failed:", err));
@@ -783,9 +812,26 @@ async function saveData() {
 // Platform Management
 window.addPlatform = async function() {
   const input = document.getElementById('newPlatformInput');
+  const addToAllCb = document.getElementById('addToAllDesignsCheckbox');
   const val = input.value.trim();
   if (val && !platforms.includes(val)) {
     platforms.push(val);
+    
+    if (addToAllCb && addToAllCb.checked) {
+      designs.forEach(d => {
+        if (!d.platforms) d.platforms = [];
+        if (!d.platforms.some(p => p.name === val)) {
+          d.platforms.push({
+            name: val,
+            status: 'pending',
+            note: '',
+            price: '1'
+          });
+        }
+      });
+      addToAllCb.checked = false;
+    }
+
     await saveData();
     input.value = '';
     renderGrids();
@@ -964,9 +1010,55 @@ window.saveUserPlatformsAssignment = async function() {
 }
 
 // Platform Details Modal Logic
+window.removePlatformFromDesign = async function(designId, platformName) {
+  if (confirm(`Are you sure you want to remove "${platformName}" from this design?`)) {
+    const design = designs.find(d => String(d.id) === String(designId));
+    if (design) {
+      sanitizeDesignPlatforms(design);
+      design.platforms = design.platforms.filter(p => p.name !== platformName);
+      await saveData();
+      renderGrids();
+      openPlatformDetails(designId);
+    }
+  }
+}
+
+window.addPlatformToDesign = async function(designId) {
+  const select = document.getElementById('addPlatformToDesignSelect');
+  const priceInput = document.getElementById('addPlatformToDesignPrice');
+  if (!select) return;
+  const platName = select.value;
+  if (!platName) {
+    alert("Please select a platform to add.");
+    return;
+  }
+  let priceVal = priceInput ? priceInput.value : '1';
+  if (!priceVal || priceVal.trim() === '' || priceVal === '0') {
+    priceVal = '1';
+  }
+  
+  const design = designs.find(d => String(d.id) === String(designId));
+  if (design) {
+    sanitizeDesignPlatforms(design);
+    if (!design.platforms.some(p => p.name === platName)) {
+      design.platforms.push({
+        name: platName,
+        status: 'pending',
+        note: '',
+        price: priceVal
+      });
+      await saveData();
+      renderGrids();
+      openPlatformDetails(designId);
+    }
+  }
+}
+
 window.openPlatformDetails = function(id) {
   const design = designs.find(d => String(d.id) === String(id));
   if (!design) return;
+
+  sanitizeDesignPlatforms(design);
 
   document.getElementById('detailPreviewImage').src = design.photo || '';
   document.getElementById('detailSku').innerText = design.sku;
@@ -989,10 +1081,17 @@ window.openPlatformDetails = function(id) {
           <span style="font-weight: 800; font-size: 1.1rem; color: ${p.status === 'completed' ? '#10b981' : 'var(--text-color)'};">
             ${p.name}
           </span>
-          <label class="checkbox-wrapper" style="margin-bottom: 0;">
-            <input type="checkbox" ${p.status === 'completed' ? 'checked' : ''} onchange="togglePlatformStatus('${design.id}', '${p.name}', this.checked)" />
-            <span class="checkbox-text">Completed</span>
-          </label>
+          <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <label class="checkbox-wrapper" style="margin-bottom: 0;">
+              <input type="checkbox" ${p.status === 'completed' ? 'checked' : ''} onchange="togglePlatformStatus('${design.id}', '${p.name}', this.checked)" />
+              <span class="checkbox-text">Completed</span>
+            </label>
+            ${isPlatformUser ? '' : `
+              <button class="btn" style="padding: 0.3rem 0.5rem; background: #fee2e2; color: #ef4444; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center;" onclick="removePlatformFromDesign('${design.id}', '${p.name}')" title="Remove Platform from Design">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+              </button>
+            `}
+          </div>
         </div>
         
         <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem;">
@@ -1005,7 +1104,39 @@ window.openPlatformDetails = function(id) {
     `).join('');
   }
 
+  // Populate Add Platform to Design Section for Admin Users
+  const addSection = document.getElementById('addPlatformToDesignSection');
+  if (addSection) {
+    if (isPlatformUser) {
+      addSection.style.display = 'none';
+    } else {
+      addSection.style.display = 'block';
+      const select = document.getElementById('addPlatformToDesignSelect');
+      const addBtn = document.getElementById('addPlatformToDesignBtn');
+      
+      const existingNames = (design.platforms || []).map(p => p.name);
+      const availablePlatforms = platforms.filter(p => !existingNames.includes(p));
+
+      if (availablePlatforms.length === 0) {
+        select.innerHTML = `<option value="">All platforms already added</option>`;
+        select.disabled = true;
+        if (addBtn) addBtn.disabled = true;
+      } else {
+        select.disabled = false;
+        if (addBtn) addBtn.disabled = false;
+        select.innerHTML = `<option value="">-- Select Platform --</option>` + availablePlatforms.map(p => `<option value="${p}">${p}</option>`).join('');
+      }
+
+      if (addBtn) {
+        addBtn.onclick = function() {
+          addPlatformToDesign(design.id);
+        };
+      }
+    }
+  }
+
   platformDetailsModal.classList.add('active');
+  lucide.createIcons();
 }
 
 window.closePlatformDetailsModal = function() {
@@ -1124,6 +1255,9 @@ document.body.addEventListener('click', (e) => {
 // Render UI
 function renderGrids() {
   if (!currentUser) return; // Prevent rendering if not logged in
+
+  // Always sanitize design platforms array before filtering/rendering
+  designs.forEach(d => sanitizeDesignPlatforms(d));
 
   const pendingTerm = searchPending.value.toLowerCase();
   const completedTerm = searchCompleted.value.toLowerCase();
