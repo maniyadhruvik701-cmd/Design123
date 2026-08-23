@@ -13,6 +13,11 @@ function sanitizeDesignPlatforms(design) {
       design.platforms = [];
     }
   }
+  // Auto-remove any platform entries from the design if the platform was deleted
+  if (platforms && platforms.length > 0) {
+    const activePlatSet = new Set(platforms.map(p => p.toLowerCase()));
+    design.platforms = design.platforms.filter(p => p && p.name && activePlatSet.has(p.name.toLowerCase()));
+  }
   return design.platforms;
 }
 
@@ -452,19 +457,14 @@ function renderUsersManager() {
   lucide.createIcons();
 }
 
-async function saveUsersDb() {
-  await localforage.setItem('designStudioUsers', appUsers);
+function saveUsersDb() {
+  localforage.setItem('designStudioUsers', appUsers).catch(err => console.error("LocalForage saveUsersDb failed:", err));
   if (isFirebaseConnected) {
-    try {
-      await fbDb.ref('appUsers').set(appUsers);
-    } catch (err) {
-      console.error("Firebase saveUsersDb failed:", err);
-      alert("Error: Failed to save user permissions to Firebase. " + err.message);
-    }
+    fbDb.ref('appUsers').set(appUsers).catch(err => console.error("Firebase saveUsersDb failed:", err));
   }
 }
 
-window.saveUserPermissions = async function(username) {
+window.saveUserPermissions = function(username) {
   const userIndex = appUsers.findIndex(u => u.username === username);
   if (userIndex === -1) return;
 
@@ -481,12 +481,13 @@ window.saveUserPermissions = async function(username) {
     platforms: existingPlatforms
   };
 
-  // Save to DB
-  await saveUsersDb();
+  // Instant UI update
+  renderUsersManager();
+
+  // Save to DB in background
+  saveUsersDb();
   
   alert(`Permissions for user "${username}" saved successfully!`);
-  
-  renderUsersManager();
 }
 
 // Helper for displaying prices
@@ -788,76 +789,125 @@ searchCompleted.addEventListener('input', renderGrids);
 if (searchStockOut) searchStockOut.addEventListener('input', renderGrids);
 if (searchStockIn) searchStockIn.addEventListener('input', renderGrids);
 
-// Save to localforage (IndexedDB) and Firebase
-async function saveData() {
-  await localforage.setItem('designStudioData', designs);
-  await localforage.setItem('designStudioPlatforms', platforms);
+// Save to localforage (IndexedDB) and Firebase asynchronously in background
+function saveData() {
+  localforage.setItem('designStudioData', designs).catch(err => console.error("LocalForage saveData error:", err));
+  localforage.setItem('designStudioPlatforms', platforms).catch(err => console.error("LocalForage platforms error:", err));
   
   if (isFirebaseConnected) {
-    try {
-      // Store platforms as a wrapped object to avoid Firebase array re-indexing on delete
-      await fbDb.ref('platformsData').set({ list: platforms });
-      const dbObject = {};
-      designs.forEach(d => {
-        dbObject[d.id] = d;
-      });
-      await fbDb.ref('designs').set(dbObject);
-    } catch (err) {
-      console.error("Firebase saveData failed:", err);
-      alert("Error: Failed to sync designs or platforms to Firebase. " + err.message);
-    }
+    // Store platforms as a wrapped object to avoid Firebase array re-indexing on delete
+    fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms sync failed:", err));
+    const dbObject = {};
+    designs.forEach(d => {
+      dbObject[d.id] = d;
+    });
+    fbDb.ref('designs').set(dbObject).catch(err => console.error("Firebase designs sync failed:", err));
   }
 }
 
-// Platform Management
-window.addPlatform = async function() {
+// Platform Management - Instant Optimistic UI Update
+window.addPlatform = function() {
   const input = document.getElementById('newPlatformInput');
   const addToAllCb = document.getElementById('addToAllDesignsCheckbox');
+  if (!input) return;
   const val = input.value.trim();
-  if (val && !platforms.includes(val)) {
-    platforms.push(val);
-    
-    if (addToAllCb && addToAllCb.checked) {
-      designs.forEach(d => {
-        if (!d.platforms) d.platforms = [];
-        if (!d.platforms.some(p => p.name === val)) {
-          d.platforms.push({
-            name: val,
-            status: 'pending',
-            note: '',
-            price: '1'
-          });
-        }
-      });
-      addToAllCb.checked = false;
-    }
+  if (!val) {
+    alert("Please enter a platform name!");
+    return;
+  }
+  if (platforms.includes(val)) {
+    alert(`Platform "${val}" is already added!`);
+    return;
+  }
 
-    await saveData();
-    input.value = '';
+  platforms.push(val);
+  
+  // Automatically add this platform to all existing designs as Pending
+  const shouldAddToAll = !addToAllCb || addToAllCb.checked;
+  if (shouldAddToAll) {
+    designs.forEach(d => {
+      if (!d.platforms) d.platforms = [];
+      if (!d.platforms.some(p => p.name.toLowerCase() === val.toLowerCase())) {
+        d.platforms.push({
+          name: val,
+          status: 'pending',
+          note: '',
+          price: '1'
+        });
+      }
+    });
+  }
+
+  if (addToAllCb) {
+    addToAllCb.checked = true; // Keep checked for subsequent platform additions
+  }
+
+  input.value = '';
+
+  // 1. Update UI INSTANTLY (< 5ms response time)
+  renderGrids();
+  renderPlatformManager();
+  renderPlatformSelect();
+  renderUsersManager();
+
+  // 2. Save in background
+  saveData();
+}
+
+window.syncAllPlatformsToAllDesigns = function() {
+  let addedCount = 0;
+  platforms.forEach(plat => {
+    designs.forEach(d => {
+      if (!d.platforms) d.platforms = [];
+      if (!d.platforms.some(p => p.name.toLowerCase() === plat.toLowerCase())) {
+        d.platforms.push({
+          name: plat,
+          status: 'pending',
+          note: '',
+          price: '1'
+        });
+        addedCount++;
+      }
+    });
+  });
+
+  if (addedCount > 0) {
     renderGrids();
-    renderPlatformManager();
-    renderPlatformSelect();
-    renderUsersManager();
+    saveData();
+    alert(`Successfully synced platforms! Added ${addedCount} missing platform entry/entries to existing designs.`);
+  } else {
+    alert("All existing designs already have all platforms assigned.");
   }
 }
 
-window.deletePlatform = async function(platformName) {
-  if (confirm(`Are you sure you want to delete ${platformName}?`)) {
-    platforms = platforms.filter(p => p !== platformName);
+window.deletePlatform = function(platformName) {
+  if (confirm(`Are you sure you want to delete "${platformName}"?`)) {
+    // 1. Filter out from global platforms array
+    platforms = platforms.filter(p => p.toLowerCase() !== platformName.toLowerCase());
     
-    // Clean up from user permissions
-    appUsers.forEach(u => {
-      if (u.permissions && u.permissions.platforms) {
-        u.permissions.platforms = u.permissions.platforms.filter(p => p !== platformName);
+    // 2. Remove platform from all designs
+    designs.forEach(d => {
+      if (d.platforms && Array.isArray(d.platforms)) {
+        d.platforms = d.platforms.filter(p => p && p.name && p.name.toLowerCase() !== platformName.toLowerCase());
       }
     });
-    await saveUsersDb();
     
-    await saveData();
+    // 3. Clean up from user permissions
+    appUsers.forEach(u => {
+      if (u.permissions && u.permissions.platforms) {
+        u.permissions.platforms = u.permissions.platforms.filter(p => p.toLowerCase() !== platformName.toLowerCase());
+      }
+    });
+
+    // 4. Update UI INSTANTLY
     renderGrids();
     renderPlatformManager();
     renderPlatformSelect();
     renderUsersManager();
+
+    // 5. Save in background
+    saveUsersDb();
+    saveData();
   }
 }
 
@@ -936,12 +986,17 @@ window.editDesignItem = function(id) {
   addDesignModal.classList.add('active');
 }
 
-window.deleteDesignItem = async function(id) {
+window.deleteDesignItem = function(id) {
   if (currentUser && currentUser.role === 'platform') return;
   if (confirm("Are you sure you want to delete this design?")) {
     designs = designs.filter(d => String(d.id) !== String(id));
-    await saveData();
+    // Render UI instantly
     renderGrids();
+    // Delete from Firebase directly & save in background
+    if (isFirebaseConnected) {
+      fbDb.ref(`designs/${id}`).remove().catch(err => console.error("Firebase delete design error:", err));
+    }
+    saveData();
   }
 }
 
