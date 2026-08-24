@@ -13,11 +13,14 @@ function sanitizeDesignPlatforms(design) {
       design.platforms = [];
     }
   }
-  // Auto-remove any platform entries from the design if the platform was deleted
-  if (platforms && platforms.length > 0) {
-    const activePlatSet = new Set(platforms.map(p => p.toLowerCase()));
-    design.platforms = design.platforms.filter(p => p && p.name && activePlatSet.has(p.name.toLowerCase()));
-  }
+  // Clean up platform object structure without auto-deleting valid platform data
+  design.platforms = design.platforms.map(p => {
+    if (typeof p === 'string') {
+      return { name: p, status: 'pending', note: '', price: '1' };
+    }
+    return p;
+  }).filter(p => p && p.name);
+
   return design.platforms;
 }
 
@@ -124,11 +127,26 @@ function setupFirebaseListeners() {
   if (areListenersSetup) return;
   areListenersSetup = true;
 
-  // DESIGNS: Load ONCE only — same reason as platforms.
-  // .on() listener fires after every .set() call (including our own deletes),
-  // restoring the old Firebase cached data and undoing the deletion.
-  fbDb.ref('designs').once('value').then(snapshot => {
-    const data = snapshot.val();
+  // DESIGNS & PLATFORMS: Load ONCE together safely to prevent race condition.
+  Promise.all([
+    fbDb.ref('platformsData').once('value'),
+    fbDb.ref('designs').once('value')
+  ]).then(([platformsSnap, designsSnap]) => {
+    const platData = platformsSnap.val();
+    if (platData && platData.list && Array.isArray(platData.list) && platData.list.length > 0) {
+      platforms = platData.list;
+      localforage.setItem('designStudioPlatforms', platforms);
+    } else {
+      if (platforms && platforms.length > 0) {
+        fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms init write failed:", err));
+      } else {
+        platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
+        localforage.setItem('designStudioPlatforms', platforms);
+        fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms default write failed:", err));
+      }
+    }
+
+    const data = designsSnap.val();
     if (data) {
       const rawList = Object.keys(data).map(key => {
         const item = data[key];
@@ -138,7 +156,6 @@ function setupFirebaseListeners() {
       designs = sanitizeDesigns(rawList);
       localforage.setItem('designStudioData', designs);
     } else {
-      // Firebase has no designs. Upload what we have locally.
       if (designs && designs.length > 0) {
         const dbObject = {};
         designs.forEach(d => {
@@ -151,33 +168,12 @@ function setupFirebaseListeners() {
         localforage.setItem('designStudioData', designs);
       }
     }
-    renderGrids();
-  }).catch(err => console.error("Designs load error:", err));
 
-
-  // PLATFORMS: Load ONCE only — no continuous listener.
-  // Using .on() causes a feedback loop: when we write after delete, 
-  // the listener fires again and can restore deleted platforms from cache.
-  fbDb.ref('platformsData').once('value').then(snapshot => {
-    const data = snapshot.val();
-    if (data && data.list && Array.isArray(data.list)) {
-      platforms = data.list;
-      localforage.setItem('designStudioPlatforms', platforms);
-    } else {
-      // Database has no platforms. Upload what we have locally.
-      if (platforms && platforms.length > 0) {
-        fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms init write failed:", err));
-      } else {
-        platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
-        localforage.setItem('designStudioPlatforms', platforms);
-        fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms default write failed:", err));
-      }
-    }
     renderGrids();
     renderPlatformManager();
     renderPlatformSelect();
     renderUsersManager();
-  }).catch(err => console.error("Platforms load error:", err));
+  }).catch(err => console.error("Firebase load error:", err));
 
   // USERS: Real-time listener (needed so permission changes reflect on all devices)
   fbDb.ref('appUsers').on('value', snapshot => {
@@ -1312,7 +1308,19 @@ function renderGrids() {
   if (!currentUser) return; // Prevent rendering if not logged in
 
   // Always sanitize design platforms array before filtering/rendering
-  designs.forEach(d => sanitizeDesignPlatforms(d));
+  designs.forEach(d => {
+    sanitizeDesignPlatforms(d);
+    // Fallback: If a design has 0 platforms, auto-assign active platforms so it never vanishes
+    if (!d.platforms || d.platforms.length === 0) {
+      const activePlats = (platforms && platforms.length > 0) ? platforms : ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
+      d.platforms = activePlats.map(p => ({
+        name: p,
+        status: 'pending',
+        note: '',
+        price: '1'
+      }));
+    }
+  });
 
   const pendingTerm = searchPending.value.toLowerCase();
   const completedTerm = searchCompleted.value.toLowerCase();
@@ -1320,65 +1328,51 @@ function renderGrids() {
   const stockInTerm = searchStockIn ? searchStockIn.value.toLowerCase() : '';
 
   const isPlatformUser = currentUser.role === 'platform';
+  const userPermPlats = (currentUser.permissions?.platforms || []).map(p => p.toLowerCase());
+  const hasUserPlatform = (pName) => !isPlatformUser || userPermPlats.includes((pName || '').toLowerCase());
 
   // Filter designs based on role and status
   const pending = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
-    if (isPlatformUser) {
-      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'pending') && matchesSearch;
-    } else {
-      return d.platforms.some(p => p.status === 'pending') && matchesSearch;
-    }
+    return d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'pending') && matchesSearch;
   });
 
   const completed = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
-    if (isPlatformUser) {
-      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') && matchesSearch;
-    } else {
-      return d.platforms.some(p => p.status === 'completed') && matchesSearch;
-    }
+    return d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed') && matchesSearch;
   });
 
   const stockOut = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(stockOutTerm) || d.description.toLowerCase().includes(stockOutTerm);
-    const hasCompletedPlatform = isPlatformUser
-      ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed')
-      : d.platforms.some(p => p.status === 'completed');
+    const hasCompletedPlatform = d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed');
     return hasCompletedPlatform && d.stockStatus === 'out' && matchesSearch;
   });
 
   const stockIn = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(stockInTerm) || d.description.toLowerCase().includes(stockInTerm);
-    const hasCompletedPlatform = isPlatformUser
-      ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed')
-      : d.platforms.some(p => p.status === 'completed');
+    const hasCompletedPlatform = d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed');
     return hasCompletedPlatform && d.stockStatus === 'in' && matchesSearch;
   });
 
   // Calculate stats counts based on role (not search filter)
   const totalPending = designs.filter(d => 
-    d.platforms && 
-    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'pending') : d.platforms.some(p => p.status === 'pending'))
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'pending')
   ).length;
 
   const totalCompleted = designs.filter(d => 
-    d.platforms &&
-    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed')
   ).length;
 
   const totalStockOut = designs.filter(d => 
-    d.platforms && d.stockStatus === 'out' &&
-    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
+    d.platforms && d.stockStatus === 'out' && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed')
   ).length;
 
   const totalStockIn = designs.filter(d => 
-    d.platforms && d.stockStatus === 'in' &&
-    (isPlatformUser ? d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') : d.platforms.some(p => p.status === 'completed'))
+    d.platforms && d.stockStatus === 'in' && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed')
   ).length;
 
   const pendingCountEl = document.getElementById('pendingCount');
@@ -1397,9 +1391,7 @@ function renderGrids() {
   } else {
     pendingEmptyState.style.display = 'none';
     pendingGrid.innerHTML = pending.map(design => {
-      const userAssignedPlats = isPlatformUser 
-        ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
-        : design.platforms;
+      const userAssignedPlats = design.platforms.filter(p => hasUserPlatform(p.name));
       const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
 
       return `
@@ -1448,9 +1440,7 @@ function renderGrids() {
   } else {
     completedEmptyState.style.display = 'none';
     completedGrid.innerHTML = completed.map(design => {
-      const userAssignedPlats = isPlatformUser 
-        ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
-        : design.platforms;
+      const userAssignedPlats = design.platforms.filter(p => hasUserPlatform(p.name));
       const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
       const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
 
@@ -1509,9 +1499,7 @@ function renderGrids() {
     if (stockOutEmptyState) stockOutEmptyState.style.display = 'none';
     if (stockOutGrid) {
       stockOutGrid.innerHTML = stockOut.map(design => {
-        const userAssignedPlats = isPlatformUser 
-          ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
-          : design.platforms;
+        const userAssignedPlats = design.platforms.filter(p => hasUserPlatform(p.name));
         const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
         const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
 
@@ -1570,9 +1558,7 @@ function renderGrids() {
     if (stockInEmptyState) stockInEmptyState.style.display = 'none';
     if (stockInGrid) {
       stockInGrid.innerHTML = stockIn.map(design => {
-        const userAssignedPlats = isPlatformUser 
-          ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
-          : design.platforms;
+        const userAssignedPlats = design.platforms.filter(p => hasUserPlatform(p.name));
         const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
         const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
 
