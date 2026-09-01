@@ -2023,6 +2023,74 @@ window.handleExcelFileUpload = function(file) {
   reader.readAsArrayBuffer(file);
 };
 
+// Helper to test if a string is a link/URL
+function isLinkValue(val) {
+  if (!val || typeof val !== 'string') return false;
+  const v = val.trim().toLowerCase();
+  return v.startsWith('http://') || v.startsWith('https://') || v.startsWith('www.') || 
+         v.includes('.com') || v.includes('.in') || v.includes('.org') || v.includes('.net') || 
+         v.includes('.co') || v.includes('/') || v.length > 15;
+}
+
+// Helper to extract platform name from column header like "Flipkart Link", "Amazon URL", "vender_link"
+function extractPlatformFromHeader(header) {
+  let h = String(header || '').trim();
+  const cleaned = h.replace(/[-_ ]*(link|url|note|notes|listing|website link|portal link)[-_ ]*/gi, '').trim();
+  return cleaned || h;
+}
+
+// Helper to extract clean price
+function extractPrice(val) {
+  if (val === undefined || val === null) return null;
+  const s = String(val).trim();
+  if (!s || s === '-' || s === '0000' || s === '0' || s.toLowerCase() === 'no') return null;
+  const cleanStr = s.replace(/[^0-9.]/g, '');
+  const num = parseFloat(cleanStr);
+  if (!isNaN(num) && num > 0) return String(num);
+  return null;
+}
+
+// Normalization helper for fuzzy matching SKU and Platform names
+function normalizeKeyStr(str) {
+  return String(str || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Helper to find existing design by SKU (handles hyphen/space variations like AQ-401 vs AQ 401)
+function findDesignBySku(sku) {
+  if (!sku || !designs || designs.length === 0) return null;
+  const clean = String(sku).trim().toLowerCase();
+  let found = designs.find(d => d && d.sku && d.sku.trim().toLowerCase() === clean);
+  if (found) return found;
+
+  const norm = normalizeKeyStr(sku);
+  if (norm) {
+    found = designs.find(d => d && d.sku && normalizeKeyStr(d.sku) === norm);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Helper to find matching platform in design's platforms list
+function findPlatformInDesign(platformsList, platName) {
+  if (!platformsList || !platName) return null;
+  const clean = String(platName).trim().toLowerCase();
+  let found = platformsList.find(p => p && p.name && p.name.trim().toLowerCase() === clean);
+  if (found) return found;
+
+  const cleanHeader = extractPlatformFromHeader(platName).trim().toLowerCase();
+  found = platformsList.find(p => p && p.name && p.name.trim().toLowerCase() === cleanHeader);
+  if (found) return found;
+
+  const norm = normalizeKeyStr(platName);
+  const normClean = normalizeKeyStr(cleanHeader);
+  found = platformsList.find(p => {
+    if (!p || !p.name) return false;
+    const pNorm = normalizeKeyStr(p.name);
+    return pNorm === norm || pNorm === normClean || pNorm.includes(norm) || norm.includes(pNorm);
+  });
+  return found || null;
+}
+
 // Intelligent Workbook Parsing
 function processExcelWorkbook(workbook) {
   parsedExcelEntries = [];
@@ -2055,25 +2123,39 @@ function processExcelWorkbook(workbook) {
     return parsedItemsMap.get(key);
   }
 
-  // Helper to test if a string is a link/URL
-  function isLinkValue(val) {
-    if (!val || typeof val !== 'string') return false;
-    const v = val.trim().toLowerCase();
-    return v.startsWith('http://') || v.startsWith('https://') || v.startsWith('www.') || 
-           v.includes('.com') || v.includes('.in') || v.includes('.org') || v.includes('.net') || 
-           v.includes('.co') || v.includes('/') || v.length > 15;
-  }
+  // Robust entry lookup helper
+  function findMatchedEntry(sku, platHeader) {
+    const cleanSku = String(sku).trim().toLowerCase();
+    const cleanPlat = String(platHeader).trim().toLowerCase();
+    const platCleaned = extractPlatformFromHeader(platHeader).trim().toLowerCase();
 
-  // Helper to extract platform name from column header like "Flipkart Link", "Amazon URL", "vender_link"
-  function extractPlatformFromHeader(header) {
-    let h = header.trim();
-    const cleaned = h.replace(/[-_ ]*(link|url|note|notes|listing|website link|portal link)[-_ ]*/gi, '').trim();
-    return cleaned || h;
+    // 1. Exact key match
+    if (parsedItemsMap.has(`${cleanSku}__${cleanPlat}`)) {
+      return parsedItemsMap.get(`${cleanSku}__${cleanPlat}`);
+    }
+    // 2. Cleaned platform header match
+    if (parsedItemsMap.has(`${cleanSku}__${platCleaned}`)) {
+      return parsedItemsMap.get(`${cleanSku}__${platCleaned}`);
+    }
+
+    // 3. Normalized alphanumeric match
+    const normSku = normalizeKeyStr(sku);
+    const normPlat = normalizeKeyStr(platHeader);
+    const normPlatCleaned = normalizeKeyStr(platCleaned);
+
+    for (const [key, entry] of parsedItemsMap.entries()) {
+      if (normalizeKeyStr(entry.sku) === normSku) {
+        const entryPlatNorm = normalizeKeyStr(entry.platform);
+        if (entryPlatNorm === normPlat || entryPlatNorm === normPlatCleaned || entryPlatNorm.includes(normPlat) || normPlat.includes(entryPlatNorm)) {
+          return entry;
+        }
+      }
+    }
+    return null;
   }
 
   // Check if there is a dedicated 'Links' or 'Link' sheet in the workbook
   const linksSheetName = sheetNames.find(s => s.trim().toLowerCase() === 'links' || s.trim().toLowerCase() === 'link' || s.toLowerCase().includes('link'));
-  const priceSheetName = sheetNames.find(s => s !== linksSheetName && (s.toLowerCase().includes('pending') || s.toLowerCase().includes('completed') || s.toLowerCase().includes('design') || s.toLowerCase().includes('price')));
 
   // Function to parse a sheet with (Design No, Platform, Link) columns
   function parseFlatSheet(sheet) {
@@ -2139,7 +2221,7 @@ function processExcelWorkbook(workbook) {
         const link = String(rawLink !== undefined && rawLink !== null ? rawLink : '').trim();
 
         const rawPrice = priceKey ? row[priceKey] : '';
-        const price = String(rawPrice !== undefined && rawPrice !== null ? rawPrice : '').trim();
+        const numPrice = extractPrice(rawPrice);
 
         const rawStatus = statusKey ? row[statusKey] : '';
         const status = String(rawStatus !== undefined && rawStatus !== null ? rawStatus : '').trim();
@@ -2152,10 +2234,7 @@ function processExcelWorkbook(workbook) {
         const entry = getOrInitEntry(sku, finalPlatform);
         if (entry) {
           if (link && link !== '-') entry.link = link;
-          if (price) {
-            const num = parseFloat(price);
-            if (!isNaN(num) && num > 0) entry.price = String(num);
-          }
+          if (numPrice) entry.price = numPrice;
           if (status) entry.status = status;
         }
       } else {
@@ -2176,9 +2255,9 @@ function processExcelWorkbook(workbook) {
                 if (isLinkValue(val) || header.toLowerCase().includes('link') || header.toLowerCase().includes('url') || header.toLowerCase().includes('note')) {
                   entry.link = val;
                 } else {
-                  const num = parseFloat(val);
-                  if (!isNaN(num) && num > 0) {
-                    entry.price = String(num);
+                  const numPrice = extractPrice(val);
+                  if (numPrice) {
+                    entry.price = numPrice;
                   } else {
                     entry.link = val;
                   }
@@ -2195,32 +2274,48 @@ function processExcelWorkbook(workbook) {
   if (linksSheetName) {
     parseFlatSheet(workbook.Sheets[linksSheetName]);
 
-    // Also parse price sheet if available to attach prices
-    if (priceSheetName) {
-      const priceSheet = workbook.Sheets[priceSheetName];
-      const pRows = XLSX.utils.sheet_to_json(priceSheet, { defval: '' });
-      if (pRows && pRows.length > 0) {
-        const pHeaders = Object.keys(pRows[0]);
-        let pSkuKey = pHeaders.find(h => h.toLowerCase().includes('design') || h.toLowerCase().includes('sku') || h.toLowerCase().includes('no')) || pHeaders[0];
+    // 2. Parse prices from all other sheets (e.g. 'Pending Designs', 'Completed Designs', etc.)
+    const nonLinkSheets = sheetNames.filter(s => s !== linksSheetName);
+    nonLinkSheets.forEach(sheetName => {
+      const pSheet = workbook.Sheets[sheetName];
+      if (!pSheet) return;
+      const pRows = XLSX.utils.sheet_to_json(pSheet, { defval: '' });
+      if (!pRows || pRows.length === 0) return;
 
-        pRows.forEach(pRow => {
-          const pSku = String(pRow[pSkuKey] || '').trim();
-          if (!pSku || pSku === '-' || pSku.toLowerCase() === 'design name / no.') return;
+      const pHeaders = Object.keys(pRows[0]);
+      let pSkuKey = pHeaders.find(h => {
+        const lower = h.trim().toLowerCase();
+        return lower.includes('design') || lower.includes('sku') || lower.includes('item') || 
+               lower.includes('code') || lower.includes('d.no') || lower.includes('dno') || 
+               lower === 'no' || lower === 'no.' || lower === 'sr' || lower === 'sr no';
+      }) || pHeaders[0];
 
-          pHeaders.forEach(pH => {
-            if (pH === pSkuKey) return;
-            const pVal = String(pRow[pH] || '').trim();
-            const numPrice = parseFloat(pVal);
-            if (!isNaN(numPrice) && numPrice > 0) {
-              const matchedEntry = parsedItemsMap.get(`${pSku.toLowerCase()}__${pH.toLowerCase()}`);
-              if (matchedEntry) {
-                matchedEntry.price = String(numPrice);
+      pRows.forEach(pRow => {
+        const rawSku = pRow[pSkuKey];
+        const pSku = String(rawSku !== undefined && rawSku !== null ? rawSku : '').trim();
+        if (!pSku || pSku === '-' || pSku.toLowerCase() === 'design name / no.' || pSku.toLowerCase() === 'design no' || pSku.toLowerCase() === 'sku') return;
+
+        pHeaders.forEach(pH => {
+          if (pH === pSkuKey) return;
+          const pVal = pRow[pH];
+          const numPrice = extractPrice(pVal);
+          if (numPrice) {
+            let matchedEntry = findMatchedEntry(pSku, pH);
+            if (matchedEntry) {
+              matchedEntry.price = numPrice;
+            } else if (parseFloat(numPrice) > 1) {
+              const platName = extractPlatformFromHeader(pH);
+              if (platName && platName.toLowerCase() !== 'description' && platName.toLowerCase() !== 'photo' && platName.toLowerCase() !== 'image') {
+                const newEntry = getOrInitEntry(pSku, platName);
+                if (newEntry) {
+                  newEntry.price = numPrice;
+                }
               }
             }
-          });
+          }
         });
-      }
-    }
+      });
+    });
   } else {
     // If no dedicated Links sheet, parse all sheets
     sheetNames.forEach(sheetName => {
@@ -2248,13 +2343,12 @@ function renderExcelPreview() {
 
   if (!previewContainer || !tbody) return;
 
-  const existingSkus = new Set(designs.map(d => d.sku.trim().toLowerCase()));
-
   let updateCount = 0;
   let newCount = 0;
 
   const rowsHtml = parsedExcelEntries.map((item, idx) => {
-    const isExisting = existingSkus.has(item.sku.toLowerCase());
+    const matchedDesign = findDesignBySku(item.sku);
+    const isExisting = !!matchedDesign;
     if (isExisting) {
       updateCount++;
     } else {
@@ -2264,7 +2358,7 @@ function renderExcelPreview() {
     return `
       <tr>
         <td style="color: var(--text-muted); font-size: 0.75rem;">${idx + 1}</td>
-        <td style="font-weight: 700; color: #1e293b;">${item.sku}</td>
+        <td style="font-weight: 700; color: #1e293b;">${item.sku} ${matchedDesign && matchedDesign.sku !== item.sku ? `<span style="color: #64748b; font-size: 0.75rem; font-weight: normal;">(${matchedDesign.sku})</span>` : ''}</td>
         <td>
           <span style="display: inline-block; background: #e0f2fe; color: #0284c7; padding: 0.15rem 0.5rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">
             ${item.platform}
@@ -2317,24 +2411,25 @@ window.executeExcelImport = async function() {
 
     // 1. Auto-register any brand new platforms found in Excel
     parsedExcelEntries.forEach(entry => {
-      if (entry.platform && !platforms.some(p => p.toLowerCase() === entry.platform.toLowerCase())) {
+      if (entry.platform && !platforms.some(p => p.toLowerCase() === entry.platform.toLowerCase() || normalizeKeyStr(p) === normalizeKeyStr(entry.platform))) {
         platforms.push(entry.platform);
         newPlatformsAdded++;
       }
     });
 
-    // 2. Group parsed entries by SKU
+    // 2. Group parsed entries by SKU (normalized)
     const entriesBySku = new Map();
     parsedExcelEntries.forEach(entry => {
-      const skuKey = entry.sku.toLowerCase();
-      if (!entriesBySku.has(skuKey)) {
-        entriesBySku.set(skuKey, []);
+      const normKey = normalizeKeyStr(entry.sku) || entry.sku.toLowerCase();
+      if (!entriesBySku.has(normKey)) {
+        entriesBySku.set(normKey, []);
       }
-      entriesBySku.get(skuKey).push(entry);
+      entriesBySku.get(normKey).push(entry);
     });
 
     entriesBySku.forEach((entries, skuKey) => {
-      const existingDesign = designs.find(d => d.sku.trim().toLowerCase() === skuKey);
+      const sampleSku = entries[0].sku;
+      const existingDesign = findDesignBySku(sampleSku);
 
       if (existingDesign) {
         // UPDATE EXISTING DESIGN
@@ -2342,7 +2437,7 @@ window.executeExcelImport = async function() {
         let changed = false;
 
         entries.forEach(entry => {
-          let targetPlat = existingDesign.platforms.find(p => p.name.toLowerCase() === entry.platform.toLowerCase());
+          let targetPlat = findPlatformInDesign(existingDesign.platforms, entry.platform);
 
           if (!targetPlat) {
             // Platform not yet attached to this design, add it!
@@ -2391,7 +2486,7 @@ window.executeExcelImport = async function() {
 
         // Initialize platforms for new design
         const designPlatforms = activePlatformsList.map(pName => {
-          const matchedEntry = entries.find(e => e.platform.toLowerCase() === pName.toLowerCase());
+          const matchedEntry = entries.find(e => e.platform.toLowerCase() === pName.toLowerCase() || normalizeKeyStr(e.platform) === normalizeKeyStr(pName));
           const hasLink = matchedEntry && matchedEntry.link && matchedEntry.link.trim() !== '';
           return {
             name: pName,
@@ -2403,7 +2498,7 @@ window.executeExcelImport = async function() {
 
         // Add any additional platforms from entries that might not be in activePlatformsList
         entries.forEach(entry => {
-          if (!designPlatforms.some(p => p.name.toLowerCase() === entry.platform.toLowerCase())) {
+          if (!designPlatforms.some(p => p.name.toLowerCase() === entry.platform.toLowerCase() || normalizeKeyStr(p.name) === normalizeKeyStr(entry.platform))) {
             designPlatforms.push({
               name: entry.platform,
               status: (entry.link && markCompleted) ? 'completed' : 'pending',
@@ -2421,7 +2516,7 @@ window.executeExcelImport = async function() {
           platforms: designPlatforms
         };
 
-        designs.push(newDesign);
+        designs.unshift(newDesign);
         createdDesignsCount++;
         entries.forEach(e => {
           if (e.link && e.link.trim() !== '') updatedLinksCount++;
