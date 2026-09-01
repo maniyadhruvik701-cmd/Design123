@@ -1856,3 +1856,576 @@ window.exportCompletedToExcel = function() {
 
   XLSX.writeFile(wb, "Completed_Designs.xlsx");
 };
+
+// ==========================================
+// EXCEL UPLOAD & AUTO IMPORT LOGIC
+// ==========================================
+
+let parsedExcelEntries = [];
+
+window.openExcelUploadModal = function() {
+  const modal = document.getElementById('excelUploadModal');
+  const fileInput = document.getElementById('excelFileInput');
+  const fileNameDisplay = document.getElementById('excelSelectedFileName');
+  const previewContainer = document.getElementById('excelPreviewContainer');
+  const submitBtn = document.getElementById('excelImportSubmitBtn');
+  
+  if (!modal) return;
+
+  // Reset states
+  parsedExcelEntries = [];
+  if (fileInput) fileInput.value = '';
+  if (fileNameDisplay) {
+    fileNameDisplay.innerText = '';
+    fileNameDisplay.style.display = 'none';
+  }
+  if (previewContainer) previewContainer.style.display = 'none';
+  if (submitBtn) submitBtn.disabled = true;
+
+  // Setup drag & drop listeners on drop zone once
+  const dropZone = document.getElementById('excelDropZone');
+  if (dropZone && !dropZone.dataset.dndReady) {
+    dropZone.dataset.dndReady = 'true';
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('dragover');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('dragover');
+      }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files && files.length > 0) {
+        handleExcelFileUpload(files[0]);
+      }
+    }, false);
+  }
+
+  modal.classList.add('active');
+  lucide.createIcons();
+};
+
+window.closeExcelUploadModal = function() {
+  const modal = document.getElementById('excelUploadModal');
+  if (modal) modal.classList.remove('active');
+  parsedExcelEntries = [];
+};
+
+// Download Sample Template for User
+window.downloadSampleExcelTemplate = function() {
+  if (typeof XLSX === 'undefined') {
+    alert("Excel library is loading or failed to load. Please try again.");
+    return;
+  }
+
+  const sampleFlat = [
+    {
+      "Design Name / No.": "DSGN-101",
+      "Platform": "vender",
+      "Link": "https://example.com/product/101",
+      "Price": 499
+    },
+    {
+      "Design Name / No.": "DSGN-101",
+      "Platform": "website",
+      "Link": "https://mybrand.com/item/101",
+      "Price": 599
+    },
+    {
+      "Design Name / No.": "DSGN-102",
+      "Platform": "b2b",
+      "Link": "https://b2b.example.com/p/102",
+      "Price": 399
+    },
+    {
+      "Design Name / No.": "DSGN-103",
+      "Platform": "shop",
+      "Link": "https://shop.example.com/103",
+      "Price": 450
+    }
+  ];
+
+  const sampleMulti = [
+    {
+      "Design Name / No.": "DSGN-101",
+      "vender": 499,
+      "b2b": 399,
+      "shop": 450,
+      "website": 599,
+      "bholo": 420,
+      "portal": 499
+    },
+    {
+      "Design Name / No.": "DSGN-102",
+      "vender": 550,
+      "b2b": 450,
+      "shop": 500,
+      "website": 650,
+      "bholo": 480,
+      "portal": 550
+    }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.json_to_sheet(sampleFlat);
+  XLSX.utils.book_append_sheet(wb, ws1, "Designs & Links");
+  
+  const ws2 = XLSX.utils.json_to_sheet(sampleMulti);
+  XLSX.utils.book_append_sheet(wb, ws2, "Multi-Platform Prices");
+
+  XLSX.writeFile(wb, "Design_Import_Template.xlsx");
+};
+
+window.handleExcelFileSelect = function(e) {
+  const file = e.target.files[0];
+  if (file) {
+    handleExcelFileUpload(file);
+  }
+};
+
+window.handleExcelFileUpload = function(file) {
+  if (typeof XLSX === 'undefined') {
+    alert("Excel library is still loading. Please try again.");
+    return;
+  }
+
+  const fileNameDisplay = document.getElementById('excelSelectedFileName');
+  if (fileNameDisplay) {
+    fileNameDisplay.innerText = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+    fileNameDisplay.style.display = 'block';
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+      
+      processExcelWorkbook(workbook);
+    } catch (err) {
+      console.error("Failed to parse Excel file:", err);
+      alert("Could not read this Excel file. Please ensure it is a valid .xlsx, .xls, or .csv file.");
+    }
+  };
+
+  reader.readAsArrayBuffer(file);
+};
+
+// Intelligent Workbook Parsing
+function processExcelWorkbook(workbook) {
+  parsedExcelEntries = [];
+  const defaultPlatform = (currentUser && currentUser.role === 'platform' && currentUser.permissions?.platforms?.[0]) || (platforms[0] || 'vender');
+  
+  const sheetNames = workbook.SheetNames;
+  if (!sheetNames || sheetNames.length === 0) {
+    alert("The uploaded Excel workbook contains no sheets.");
+    return;
+  }
+
+  const parsedItemsMap = new Map(); // Key: `${sku.toLowerCase()}__${platform.toLowerCase()}`
+
+  function getOrInitEntry(sku, platform) {
+    const cleanSku = String(sku).trim();
+    const cleanPlatform = String(platform).trim();
+    if (!cleanSku || cleanSku === '-' || cleanSku.toLowerCase() === 'design name / no.' || cleanSku.toLowerCase() === 'design no') return null;
+    if (!cleanPlatform || cleanPlatform === '-') return null;
+
+    const key = `${cleanSku.toLowerCase()}__${cleanPlatform.toLowerCase()}`;
+    if (!parsedItemsMap.has(key)) {
+      parsedItemsMap.set(key, {
+        sku: cleanSku,
+        platform: cleanPlatform,
+        link: '',
+        price: '1',
+        status: ''
+      });
+    }
+    return parsedItemsMap.get(key);
+  }
+
+  // Helper to test if a string is a link/URL
+  function isLinkValue(val) {
+    if (!val || typeof val !== 'string') return false;
+    const v = val.trim().toLowerCase();
+    return v.startsWith('http://') || v.startsWith('https://') || v.startsWith('www.') || 
+           v.includes('.com') || v.includes('.in') || v.includes('.org') || v.includes('.net') || 
+           v.includes('.co') || v.includes('/') || v.length > 15;
+  }
+
+  // Helper to extract platform name from column header like "Flipkart Link", "Amazon URL", "vender_link"
+  function extractPlatformFromHeader(header) {
+    let h = header.trim();
+    const cleaned = h.replace(/[-_ ]*(link|url|note|notes|listing|website link|portal link)[-_ ]*/gi, '').trim();
+    return cleaned || h;
+  }
+
+  sheetNames.forEach(sheetName => {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    if (!rows || rows.length === 0) return;
+
+    // 1. Analyze column headers in this sheet
+    const sampleRow = rows[0];
+    const allHeaders = Object.keys(sampleRow);
+
+    let skuKey = null;
+    let platformKey = null;
+    let linkKey = null;
+    let priceKey = null;
+    let statusKey = null;
+
+    allHeaders.forEach(header => {
+      const h = header.trim().toLowerCase();
+      
+      // Platform Column header matching (handles plateform, platform, platfrom, etc.)
+      if (h === 'platform' || h === 'plateform' || h === 'platfrom' || h === 'portal' || 
+          h === 'channel' || h === 'marketplace' || h === 'site' || h === 'platform name' || 
+          h === 'plateform name' || h === 'plateform' || h.startsWith('plat')) {
+        platformKey = header;
+      }
+      // SKU Column header matching
+      else if (h.includes('design') || h.includes('sku') || h.includes('item') || 
+               h.includes('code') || h.includes('model') || h === 'no' || h === 'no.' || 
+               h === 'sr' || h === 'sr no' || h === 'id' || h === 'd.no' || h === 'dno') {
+        if (!skuKey) skuKey = header;
+      }
+      // Link / Note Column header matching
+      else if (h === 'link' || h === 'url' || h === 'note' || h === 'notes' || 
+               h === 'web link' || h === 'product link' || h === 'listing link' || 
+               h === 'listing' || h === 'href' || h.includes('link') || h.includes('url')) {
+        linkKey = header;
+      }
+      // Price Column header matching
+      else if (h.includes('price') || h.includes('rate') || h.includes('amount') || h.includes('cost') || h.includes('mrp')) {
+        priceKey = header;
+      }
+      // Status Column header matching
+      else if (h.includes('status')) {
+        statusKey = header;
+      }
+    });
+
+    // Fallback SKU key: first header if not detected
+    if (!skuKey && allHeaders.length > 0) {
+      skuKey = allHeaders[0];
+    }
+
+    const isFlatTableWithPlatformCol = Boolean(platformKey);
+
+    rows.forEach(row => {
+      const rawSku = skuKey ? row[skuKey] : row[allHeaders[0]];
+      const sku = String(rawSku !== undefined && rawSku !== null ? rawSku : '').trim();
+
+      // Skip empty or header rows
+      if (!sku || sku === '-' || sku.toLowerCase() === 'design no' || sku.toLowerCase() === 'design name / no.' || sku.toLowerCase() === 'sku') {
+        return;
+      }
+
+      if (isFlatTableWithPlatformCol) {
+        // Mode A: Flat table with dedicated Platform & Link columns
+        const rawPlatform = row[platformKey];
+        const platform = String(rawPlatform !== undefined && rawPlatform !== null ? rawPlatform : '').trim();
+        
+        const rawLink = linkKey ? row[linkKey] : '';
+        const link = String(rawLink !== undefined && rawLink !== null ? rawLink : '').trim();
+
+        const rawPrice = priceKey ? row[priceKey] : '';
+        const price = String(rawPrice !== undefined && rawPrice !== null ? rawPrice : '').trim();
+
+        const rawStatus = statusKey ? row[statusKey] : '';
+        const status = String(rawStatus !== undefined && rawStatus !== null ? rawStatus : '').trim();
+
+        // Skip rows that have no platform and no link (e.g. empty trailing rows)
+        if (!platform && !link) {
+          return;
+        }
+
+        const finalPlatform = platform || defaultPlatform;
+        const entry = getOrInitEntry(sku, finalPlatform);
+        if (entry) {
+          if (link && link !== '-') entry.link = link;
+          if (price) {
+            const num = parseFloat(price);
+            if (!isNaN(num) && num > 0) entry.price = String(num);
+          }
+          if (status) entry.status = status;
+        }
+      } else {
+        // Mode B: Multi-platform columns or single Link column
+        allHeaders.forEach(header => {
+          if (header === skuKey || header === statusKey || header === priceKey) return;
+
+          const val = String(row[header] !== undefined && row[header] !== null ? row[header] : '').trim();
+          if (!val || val === '-') return;
+
+          if (header === linkKey) {
+            // Single link column with default platform
+            const entry = getOrInitEntry(sku, defaultPlatform);
+            if (entry) {
+              entry.link = val;
+            }
+          } else {
+            // Platform-specific column (e.g. Header: "Flipkart", "Amazon", "Website Link", "vender")
+            const platName = extractPlatformFromHeader(header);
+            if (platName && platName.toLowerCase() !== 'description' && platName.toLowerCase() !== 'photo' && platName.toLowerCase() !== 'image') {
+              const entry = getOrInitEntry(sku, platName);
+              if (entry) {
+                if (isLinkValue(val) || header.toLowerCase().includes('link') || header.toLowerCase().includes('url') || header.toLowerCase().includes('note')) {
+                  entry.link = val;
+                } else {
+                  const num = parseFloat(val);
+                  if (!isNaN(num) && num > 0) {
+                    entry.price = String(num);
+                  } else {
+                    entry.link = val;
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+  });
+
+  parsedExcelEntries = Array.from(parsedItemsMap.values()).filter(item => item && item.sku);
+
+  if (parsedExcelEntries.length === 0) {
+    alert("No valid design rows could be parsed from this Excel file. Please check the columns and try again.");
+    return;
+  }
+
+  renderExcelPreview();
+}
+
+// Render Preview Table
+function renderExcelPreview() {
+  const previewContainer = document.getElementById('excelPreviewContainer');
+  const rowCountEl = document.getElementById('excelPreviewRowCount');
+  const statsEl = document.getElementById('excelPreviewStats');
+  const tbody = document.getElementById('excelPreviewTbody');
+  const submitBtn = document.getElementById('excelImportSubmitBtn');
+
+  if (!previewContainer || !tbody) return;
+
+  const existingSkus = new Set(designs.map(d => d.sku.trim().toLowerCase()));
+
+  let updateCount = 0;
+  let newCount = 0;
+
+  const rowsHtml = parsedExcelEntries.map((item, idx) => {
+    const isExisting = existingSkus.has(item.sku.toLowerCase());
+    if (isExisting) {
+      updateCount++;
+    } else {
+      newCount++;
+    }
+
+    return `
+      <tr>
+        <td style="color: var(--text-muted); font-size: 0.75rem;">${idx + 1}</td>
+        <td style="font-weight: 700; color: #1e293b;">${item.sku}</td>
+        <td>
+          <span style="display: inline-block; background: #e0f2fe; color: #0284c7; padding: 0.15rem 0.5rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">
+            ${item.platform}
+          </span>
+        </td>
+        <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${item.link ? `<a href="${item.link}" target="_blank" style="color: var(--accent-primary); text-decoration: underline;">${item.link}</a>` : `<span style="color: var(--text-muted); font-style: italic;">No Link</span>`}
+        </td>
+        <td style="font-weight: 600;">₹${item.price || '1'}</td>
+        <td>
+          ${isExisting 
+            ? `<span class="badge-action-update"><i data-lucide="refresh-cw" style="width: 11px; height: 11px; display: inline;"></i> Update Existing</span>`
+            : `<span class="badge-action-new"><i data-lucide="plus" style="width: 11px; height: 11px; display: inline;"></i> New Design</span>`
+          }
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.innerHTML = rowsHtml;
+  rowCountEl.innerText = parsedExcelEntries.length;
+  statsEl.innerHTML = `<span style="color: #b45309; font-weight: 700;">${updateCount} to Update</span> &bull; <span style="color: #15803d; font-weight: 700;">${newCount} New</span>`;
+  
+  previewContainer.style.display = 'block';
+  if (submitBtn) submitBtn.disabled = false;
+
+  lucide.createIcons();
+}
+
+// Execute Import and Save
+window.executeExcelImport = async function() {
+  if (!parsedExcelEntries || parsedExcelEntries.length === 0) {
+    alert("No data to import.");
+    return;
+  }
+
+  const submitBtn = document.getElementById('excelImportSubmitBtn');
+  const originalBtnText = submitBtn.innerHTML;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = 'Importing & Saving...';
+
+  try {
+    const markCompleted = document.getElementById('excelMarkCompletedCheckbox')?.checked ?? true;
+    const createMissing = document.getElementById('excelCreateMissingCheckbox')?.checked ?? true;
+
+    let updatedDesignsCount = 0;
+    let createdDesignsCount = 0;
+    let updatedLinksCount = 0;
+    let newPlatformsAdded = 0;
+
+    // 1. Auto-register any brand new platforms found in Excel
+    parsedExcelEntries.forEach(entry => {
+      if (entry.platform && !platforms.some(p => p.toLowerCase() === entry.platform.toLowerCase())) {
+        platforms.push(entry.platform);
+        newPlatformsAdded++;
+      }
+    });
+
+    // 2. Group parsed entries by SKU
+    const entriesBySku = new Map();
+    parsedExcelEntries.forEach(entry => {
+      const skuKey = entry.sku.toLowerCase();
+      if (!entriesBySku.has(skuKey)) {
+        entriesBySku.set(skuKey, []);
+      }
+      entriesBySku.get(skuKey).push(entry);
+    });
+
+    entriesBySku.forEach((entries, skuKey) => {
+      const existingDesign = designs.find(d => d.sku.trim().toLowerCase() === skuKey);
+
+      if (existingDesign) {
+        // UPDATE EXISTING DESIGN
+        sanitizeDesignPlatforms(existingDesign);
+        let changed = false;
+
+        entries.forEach(entry => {
+          let targetPlat = existingDesign.platforms.find(p => p.name.toLowerCase() === entry.platform.toLowerCase());
+
+          if (!targetPlat) {
+            // Platform not yet attached to this design, add it!
+            targetPlat = {
+              name: entry.platform,
+              status: 'pending',
+              note: '',
+              price: entry.price || '1'
+            };
+            existingDesign.platforms.push(targetPlat);
+            changed = true;
+          }
+
+          // Update link / note if present
+          if (entry.link && entry.link.trim() !== '') {
+            targetPlat.note = entry.link.trim();
+            updatedLinksCount++;
+            changed = true;
+
+            // Automatically complete platform if option is enabled
+            if (markCompleted) {
+              targetPlat.status = 'completed';
+            }
+          }
+
+          // Update price if present and valid
+          if (entry.price && parseFloat(entry.price) > 0) {
+            targetPlat.price = String(entry.price);
+            changed = true;
+          }
+
+          // Explicit status override if present in excel
+          if (entry.status && (entry.status.toLowerCase() === 'completed' || entry.status.toLowerCase() === 'pending')) {
+            targetPlat.status = entry.status.toLowerCase();
+            changed = true;
+          }
+        });
+
+        if (changed) {
+          updatedDesignsCount++;
+        }
+      } else if (createMissing) {
+        // CREATE NEW DESIGN
+        const newDesignId = String(Date.now() + Math.floor(Math.random() * 1000));
+        const activePlatformsList = (platforms && platforms.length > 0) ? platforms : ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
+
+        // Initialize platforms for new design
+        const designPlatforms = activePlatformsList.map(pName => {
+          const matchedEntry = entries.find(e => e.platform.toLowerCase() === pName.toLowerCase());
+          const hasLink = matchedEntry && matchedEntry.link && matchedEntry.link.trim() !== '';
+          return {
+            name: pName,
+            status: (hasLink && markCompleted) ? 'completed' : 'pending',
+            note: matchedEntry ? (matchedEntry.link || '') : '',
+            price: matchedEntry ? (matchedEntry.price || '1') : '1'
+          };
+        });
+
+        // Add any additional platforms from entries that might not be in activePlatformsList
+        entries.forEach(entry => {
+          if (!designPlatforms.some(p => p.name.toLowerCase() === entry.platform.toLowerCase())) {
+            designPlatforms.push({
+              name: entry.platform,
+              status: (entry.link && markCompleted) ? 'completed' : 'pending',
+              note: entry.link || '',
+              price: entry.price || '1'
+            });
+          }
+        });
+
+        const newDesign = {
+          id: newDesignId,
+          sku: entries[0].sku,
+          photo: '',
+          description: 'Imported from Excel',
+          platforms: designPlatforms
+        };
+
+        designs.push(newDesign);
+        createdDesignsCount++;
+        entries.forEach(e => {
+          if (e.link && e.link.trim() !== '') updatedLinksCount++;
+        });
+      }
+    });
+
+    // Save to IndexedDB (localforage) and Firebase
+    await saveData();
+
+    // Re-render all views and dropdowns
+    renderPlatformSelect();
+    renderPlatformManager();
+    renderGrids();
+
+    let msg = `Excel Import Successful!\n\n`;
+    msg += `• ${updatedDesignsCount} designs updated with links & platforms\n`;
+    if (createdDesignsCount > 0) msg += `• ${createdDesignsCount} new designs created\n`;
+    msg += `• ${updatedLinksCount} total links synchronized.`;
+    if (newPlatformsAdded > 0) msg += `\n• ${newPlatformsAdded} new platform(s) registered automatically.`;
+
+    alert(msg);
+
+    closeExcelUploadModal();
+  } catch (err) {
+    console.error("Error executing Excel import:", err);
+    alert("An error occurred during import. Please check console for details.");
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = originalBtnText;
+    }
+  }
+};
+
