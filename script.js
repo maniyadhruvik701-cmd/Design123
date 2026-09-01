@@ -2071,12 +2071,15 @@ function processExcelWorkbook(workbook) {
     return cleaned || h;
   }
 
-  sheetNames.forEach(sheetName => {
-    const sheet = workbook.Sheets[sheetName];
+  // Check if there is a dedicated 'Links' or 'Link' sheet in the workbook
+  const linksSheetName = sheetNames.find(s => s.trim().toLowerCase() === 'links' || s.trim().toLowerCase() === 'link' || s.toLowerCase().includes('link'));
+  const priceSheetName = sheetNames.find(s => s !== linksSheetName && (s.toLowerCase().includes('pending') || s.toLowerCase().includes('completed') || s.toLowerCase().includes('design') || s.toLowerCase().includes('price')));
+
+  // Function to parse a sheet with (Design No, Platform, Link) columns
+  function parseFlatSheet(sheet) {
     const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
     if (!rows || rows.length === 0) return;
 
-    // 1. Analyze column headers in this sheet
     const sampleRow = rows[0];
     const allHeaders = Object.keys(sampleRow);
 
@@ -2092,7 +2095,7 @@ function processExcelWorkbook(workbook) {
       // Platform Column header matching (handles plateform, platform, platfrom, etc.)
       if (h === 'platform' || h === 'plateform' || h === 'platfrom' || h === 'portal' || 
           h === 'channel' || h === 'marketplace' || h === 'site' || h === 'platform name' || 
-          h === 'plateform name' || h === 'plateform' || h.startsWith('plat')) {
+          h === 'plateform name' || h.startsWith('plat')) {
         platformKey = header;
       }
       // SKU Column header matching
@@ -2117,24 +2120,18 @@ function processExcelWorkbook(workbook) {
       }
     });
 
-    // Fallback SKU key: first header if not detected
-    if (!skuKey && allHeaders.length > 0) {
-      skuKey = allHeaders[0];
-    }
-
-    const isFlatTableWithPlatformCol = Boolean(platformKey);
+    if (!skuKey && allHeaders.length > 0) skuKey = allHeaders[0];
 
     rows.forEach(row => {
       const rawSku = skuKey ? row[skuKey] : row[allHeaders[0]];
       const sku = String(rawSku !== undefined && rawSku !== null ? rawSku : '').trim();
 
-      // Skip empty or header rows
       if (!sku || sku === '-' || sku.toLowerCase() === 'design no' || sku.toLowerCase() === 'design name / no.' || sku.toLowerCase() === 'sku') {
         return;
       }
 
-      if (isFlatTableWithPlatformCol) {
-        // Mode A: Flat table with dedicated Platform & Link columns
+      if (platformKey) {
+        // Dedicated platform column
         const rawPlatform = row[platformKey];
         const platform = String(rawPlatform !== undefined && rawPlatform !== null ? rawPlatform : '').trim();
         
@@ -2147,10 +2144,9 @@ function processExcelWorkbook(workbook) {
         const rawStatus = statusKey ? row[statusKey] : '';
         const status = String(rawStatus !== undefined && rawStatus !== null ? rawStatus : '').trim();
 
-        // Skip rows that have no platform and no link (e.g. empty trailing rows)
-        if (!platform && !link) {
-          return;
-        }
+        // Skip rows without platform and link
+        if (!platform && !link) return;
+        if (link === 'No links available' || link === '-') return;
 
         const finalPlatform = platform || defaultPlatform;
         const entry = getOrInitEntry(sku, finalPlatform);
@@ -2163,21 +2159,16 @@ function processExcelWorkbook(workbook) {
           if (status) entry.status = status;
         }
       } else {
-        // Mode B: Multi-platform columns or single Link column
+        // Multi-column or matrix
         allHeaders.forEach(header => {
           if (header === skuKey || header === statusKey || header === priceKey) return;
-
           const val = String(row[header] !== undefined && row[header] !== null ? row[header] : '').trim();
-          if (!val || val === '-') return;
+          if (!val || val === '-' || val === 'No links available') return;
 
           if (header === linkKey) {
-            // Single link column with default platform
             const entry = getOrInitEntry(sku, defaultPlatform);
-            if (entry) {
-              entry.link = val;
-            }
+            if (entry) entry.link = val;
           } else {
-            // Platform-specific column (e.g. Header: "Flipkart", "Amazon", "Website Link", "vender")
             const platName = extractPlatformFromHeader(header);
             if (platName && platName.toLowerCase() !== 'description' && platName.toLowerCase() !== 'photo' && platName.toLowerCase() !== 'image') {
               const entry = getOrInitEntry(sku, platName);
@@ -2198,12 +2189,49 @@ function processExcelWorkbook(workbook) {
         });
       }
     });
-  });
+  }
 
-  parsedExcelEntries = Array.from(parsedItemsMap.values()).filter(item => item && item.sku);
+  // 1. If Links sheet exists, parse it first!
+  if (linksSheetName) {
+    parseFlatSheet(workbook.Sheets[linksSheetName]);
+
+    // Also parse price sheet if available to attach prices
+    if (priceSheetName) {
+      const priceSheet = workbook.Sheets[priceSheetName];
+      const pRows = XLSX.utils.sheet_to_json(priceSheet, { defval: '' });
+      if (pRows && pRows.length > 0) {
+        const pHeaders = Object.keys(pRows[0]);
+        let pSkuKey = pHeaders.find(h => h.toLowerCase().includes('design') || h.toLowerCase().includes('sku') || h.toLowerCase().includes('no')) || pHeaders[0];
+
+        pRows.forEach(pRow => {
+          const pSku = String(pRow[pSkuKey] || '').trim();
+          if (!pSku || pSku === '-' || pSku.toLowerCase() === 'design name / no.') return;
+
+          pHeaders.forEach(pH => {
+            if (pH === pSkuKey) return;
+            const pVal = String(pRow[pH] || '').trim();
+            const numPrice = parseFloat(pVal);
+            if (!isNaN(numPrice) && numPrice > 0) {
+              const matchedEntry = parsedItemsMap.get(`${pSku.toLowerCase()}__${pH.toLowerCase()}`);
+              if (matchedEntry) {
+                matchedEntry.price = String(numPrice);
+              }
+            }
+          });
+        });
+      }
+    }
+  } else {
+    // If no dedicated Links sheet, parse all sheets
+    sheetNames.forEach(sheetName => {
+      parseFlatSheet(workbook.Sheets[sheetName]);
+    });
+  }
+
+  parsedExcelEntries = Array.from(parsedItemsMap.values()).filter(item => item && item.sku && (item.link || item.price));
 
   if (parsedExcelEntries.length === 0) {
-    alert("No valid design rows could be parsed from this Excel file. Please check the columns and try again.");
+    alert("No valid design rows with links could be parsed from this Excel file.");
     return;
   }
 
