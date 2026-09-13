@@ -15,14 +15,24 @@ export default function Pending() {
 
   const handleExport = () => {
     const data = pendingDesigns.map(design => ({
-      Design: design.sku,
+      "Design Name / No.": design.sku,
       Platform: design.platform,
       Price: design.price
     }));
 
-    const ws = XLSX.utils.json_to_sheet(data);
+    const notesData = pendingDesigns.map(design => ({
+      "Design Name / No.": design.sku,
+      Platform: design.platform || "",
+      Link: design.link || design.note || ""
+    }));
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Pending Designs");
+    const ws1 = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws1, "Pending Designs");
+
+    const ws2 = XLSX.utils.json_to_sheet(notesData);
+    XLSX.utils.book_append_sheet(wb, ws2, "Links");
+
     XLSX.writeFile(wb, "Pending_Designs.xlsx");
   };
 
