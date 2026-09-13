@@ -1738,19 +1738,25 @@ window.exportPendingToExcel = function() {
       "Design Name / No.": d.sku
     };
 
-    // Add each platform as a separate column, and its value as the price
-    relevantPlatforms.forEach(p => {
-      row[p.name] = p.price || 0;
-      
-      // Collect links/notes for Sheet 2
-      if (p.note && p.note.trim() !== '') {
+    if (relevantPlatforms && relevantPlatforms.length > 0) {
+      // Add each platform as a separate column, and its value as the price
+      relevantPlatforms.forEach(p => {
+        row[p.name] = p.price || 0;
+        
+        // Collect links/notes for Sheet 2 (include all platforms, even if link is empty)
         notesData.push({
           "Design Name / No.": d.sku,
           "Platform": p.name,
-          "Link": p.note
+          "Link": (p.note && p.note.trim() !== '') ? p.note.trim() : ""
         });
-      }
-    });
+      });
+    } else {
+      notesData.push({
+        "Design Name / No.": d.sku,
+        "Platform": "",
+        "Link": ""
+      });
+    }
 
     data.push(row);
   });
@@ -1764,15 +1770,18 @@ window.exportPendingToExcel = function() {
 
   // Sheet 1: Prices
   const ws1 = XLSX.utils.json_to_sheet(data);
+  ws1['!cols'] = [{ wch: 22 }];
   XLSX.utils.book_append_sheet(wb, ws1, "Pending Designs");
 
   // Sheet 2: Links/Notes
   if (notesData.length > 0) {
     const ws2 = XLSX.utils.json_to_sheet(notesData);
+    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   } else {
     // If no links exist, add an empty sheet with headers just in case
-    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": "No links available"}]);
+    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": ""}]);
+    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   }
 
@@ -1816,19 +1825,25 @@ window.exportCompletedToExcel = function() {
       "Design Name / No.": d.sku
     };
 
-    // Add each platform as a separate column, and its value as the price
-    relevantPlatforms.forEach(p => {
-      row[p.name] = p.price || 0;
-      
-      // Collect links/notes for Sheet 2
-      if (p.note && p.note.trim() !== '') {
+    if (relevantPlatforms && relevantPlatforms.length > 0) {
+      // Add each platform as a separate column, and its value as the price
+      relevantPlatforms.forEach(p => {
+        row[p.name] = p.price || 0;
+        
+        // Collect links/notes for Sheet 2 (include all completed platforms, even if link is empty)
         notesData.push({
           "Design Name / No.": d.sku,
           "Platform": p.name,
-          "Link": p.note
+          "Link": (p.note && p.note.trim() !== '') ? p.note.trim() : ""
         });
-      }
-    });
+      });
+    } else {
+      notesData.push({
+        "Design Name / No.": d.sku,
+        "Platform": "",
+        "Link": ""
+      });
+    }
 
     data.push(row);
   });
@@ -1842,15 +1857,18 @@ window.exportCompletedToExcel = function() {
 
   // Sheet 1: Prices
   const ws1 = XLSX.utils.json_to_sheet(data);
+  ws1['!cols'] = [{ wch: 22 }];
   XLSX.utils.book_append_sheet(wb, ws1, "Completed Designs");
 
   // Sheet 2: Links/Notes
   if (notesData.length > 0) {
     const ws2 = XLSX.utils.json_to_sheet(notesData);
+    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   } else {
     // If no links exist, add an empty sheet with headers just in case
-    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": "No links available"}]);
+    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": ""}]);
+    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   }
 
