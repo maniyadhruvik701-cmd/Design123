@@ -2041,6 +2041,28 @@ window.handleExcelFileUpload = function(file) {
   reader.readAsArrayBuffer(file);
 };
 
+// Helper to clean SKU string
+function cleanSkuString(rawVal) {
+  if (rawVal === undefined || rawVal === null) return '';
+  let s = String(rawVal).replace(/\u00A0/g, ' ').trim();
+  // Strip trailing float zeroes like 1024.0 or 1024.00 exported by Excel
+  s = s.replace(/\.0+$/, '');
+  return s;
+}
+
+// Check if string is a header or placeholder and NOT an actual SKU
+function isHeaderOrPlaceholderSku(sku) {
+  if (!sku) return true;
+  const s = String(sku).trim().toLowerCase();
+  const placeholders = [
+    '-', '--', '---', 'n/a', 'na', 'null', 'none',
+    'design no', 'design no.', 'design name', 'design name / no.', 'design name/no.',
+    'sku', 'item code', 'product code', 'd.no', 'dno', 'style no', 'sr no', 'sr. no',
+    'no', 'no.', 'sr', 'id'
+  ];
+  return placeholders.includes(s);
+}
+
 // Helper to test if a string is a link/URL
 function isLinkValue(val) {
   if (!val || typeof val !== 'string') return false;
@@ -2050,66 +2072,261 @@ function isLinkValue(val) {
          v.includes('.co') || v.includes('/') || v.length > 15;
 }
 
-// Helper to extract platform name from column header like "Flipkart Link", "Amazon URL", "vender_link"
-function extractPlatformFromHeader(header) {
-  let h = String(header || '').trim();
-  const cleaned = h.replace(/[-_ ]*(link|url|note|notes|listing|website link|portal link)[-_ ]*/gi, '').trim();
-  return cleaned || h;
-}
-
 // Helper to extract clean price
 function extractPrice(val) {
   if (val === undefined || val === null) return null;
-  const s = String(val).trim();
-  if (!s || s === '-' || s === '0000' || s === '0' || s.toLowerCase() === 'no') return null;
+  const s = String(val).replace(/\u00A0/g, ' ').trim();
+  if (!s || s === '-' || s === '0000' || s.toLowerCase() === 'no' || s.toLowerCase() === 'n/a') return null;
   const cleanStr = s.replace(/[^0-9.]/g, '');
+  if (!cleanStr) return null;
   const num = parseFloat(cleanStr);
-  if (!isNaN(num) && num > 0) return String(num);
+  if (!isNaN(num) && num >= 0) return String(num);
   return null;
 }
 
 // Normalization helper for fuzzy matching SKU and Platform names
 function normalizeKeyStr(str) {
-  return String(str || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return String(str || '').replace(/\u00A0/g, ' ').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// Helper to find existing design by SKU (handles hyphen/space variations like AQ-401 vs AQ 401)
+// Canonical platform aliases map
+const PLATFORM_ALIASES = {
+  'vendor': 'vender',
+  'vender': 'vender',
+  'vendr': 'vender',
+  'web': 'website',
+  'site': 'website',
+  'website': 'website',
+  'b2b': 'b2b',
+  'b 2 b': 'b2b',
+  'wholesale': 'b2b',
+  'shop': 'shop',
+  'retail': 'shop',
+  'store': 'shop',
+  'dukan': 'shop',
+  'dukaan': 'shop',
+  'offline': 'shop',
+  'bholo': 'bholo',
+  'bolo': 'bholo',
+  'portal': 'portal',
+  'portel': 'portal',
+  'glowroad': 'glowroad',
+  'meesho': 'meesho',
+  'amazon': 'amazon',
+  'flipkart': 'flipkart',
+  'ajio': 'ajio',
+  'myntra': 'myntra',
+  'jiomart': 'jiomart'
+};
+
+// Clean platform name from header and resolve aliases
+function resolvePlatformName(rawName) {
+  if (!rawName) return '';
+  let h = String(rawName).replace(/\u00A0/g, ' ').trim();
+  const cleaned = h.replace(/[-_ ]*(link|url|note|notes|listing|website link|portal link|rate|price|mrp)[-_ ]*/gi, '').trim();
+  const target = (cleaned || h).toLowerCase();
+  
+  if (PLATFORM_ALIASES[target]) {
+    return PLATFORM_ALIASES[target];
+  }
+  
+  const norm = normalizeKeyStr(target);
+  for (const [alias, canonical] of Object.entries(PLATFORM_ALIASES)) {
+    if (normalizeKeyStr(alias) === norm) {
+      return canonical;
+    }
+  }
+
+  if (Array.isArray(platforms)) {
+    const existing = platforms.find(p => p.toLowerCase() === target || normalizeKeyStr(p) === norm);
+    if (existing) return existing;
+  }
+
+  return cleaned || h;
+}
+
+// Find existing design by SKU with multiple intelligent fallback levels
 function findDesignBySku(sku) {
   if (!sku || !designs || designs.length === 0) return null;
-  const clean = String(sku).trim().toLowerCase();
+  const rawSku = cleanSkuString(sku);
+  if (!rawSku || isHeaderOrPlaceholderSku(rawSku)) return null;
+
+  const clean = rawSku.toLowerCase();
+  
+  // 1. Exact case-insensitive match
   let found = designs.find(d => d && d.sku && d.sku.trim().toLowerCase() === clean);
   if (found) return found;
 
-  const norm = normalizeKeyStr(sku);
+  // 2. Normalized alphanumeric match
+  const norm = normalizeKeyStr(rawSku);
   if (norm) {
     found = designs.find(d => d && d.sku && normalizeKeyStr(d.sku) === norm);
     if (found) return found;
   }
+
+  // 3. Match without leading zeros (e.g., "0012" vs "12")
+  const strippedZeros = norm.replace(/^0+/, '');
+  if (strippedZeros) {
+    found = designs.find(d => {
+      if (!d || !d.sku) return false;
+      const dNorm = normalizeKeyStr(d.sku).replace(/^0+/, '');
+      return dNorm === strippedZeros;
+    });
+    if (found) return found;
+  }
+
   return null;
 }
 
-// Helper to find matching platform in design's platforms list
+// Find platform inside a design's platform array
 function findPlatformInDesign(platformsList, platName) {
   if (!platformsList || !platName) return null;
-  const clean = String(platName).trim().toLowerCase();
+  const resolved = resolvePlatformName(platName);
+  const clean = resolved.toLowerCase();
+  const norm = normalizeKeyStr(resolved);
+
+  // 1. Exact case-insensitive match
   let found = platformsList.find(p => p && p.name && p.name.trim().toLowerCase() === clean);
   if (found) return found;
 
-  const cleanHeader = extractPlatformFromHeader(platName).trim().toLowerCase();
-  found = platformsList.find(p => p && p.name && p.name.trim().toLowerCase() === cleanHeader);
+  // 2. Normalized alphanumeric equality match (e.g. 'AJ-TN' == 'AJTN', 'MY-JIHU 01' == 'myjihu01')
+  found = platformsList.find(p => p && p.name && normalizeKeyStr(p.name) === norm);
   if (found) return found;
 
-  const norm = normalizeKeyStr(platName);
-  const normClean = normalizeKeyStr(cleanHeader);
-  found = platformsList.find(p => {
-    if (!p || !p.name) return false;
-    const pNorm = normalizeKeyStr(p.name);
-    return pNorm === norm || pNorm === normClean || pNorm.includes(norm) || norm.includes(pNorm);
-  });
-  return found || null;
+  return null;
 }
 
-// Intelligent Workbook Parsing
+// Status normalizer
+function parseStatusValue(val) {
+  if (!val) return '';
+  const s = String(val).toLowerCase().trim();
+  if (['completed', 'complete', 'done', 'yes', 'listed', 'live', 'active', 'ok', 'true', '✓'].includes(s)) {
+    return 'completed';
+  }
+  if (['pending', 'no', 'remaining', 'process', 'in progress', 'false'].includes(s)) {
+    return 'pending';
+  }
+  return '';
+}
+
+// Scan sheet to find the row where column headers actually exist (skips title/empty rows)
+function detectHeaderRowIndex(sheet) {
+  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
+  if (!matrix || matrix.length === 0) return 0;
+
+  let bestRowIndex = 0;
+  let maxScore = -1;
+
+  for (let r = 0; r < Math.min(matrix.length, 20); r++) {
+    const row = matrix[r];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    let score = 0;
+    const rowText = row.map(c => String(c || '').trim().toLowerCase());
+
+    rowText.forEach(cell => {
+      if (!cell) return;
+      if (cell.includes('design') || cell.includes('sku') || cell.includes('style') || cell.includes('art no') || cell.includes('d.no') || cell.includes('dno') || cell.includes('item code')) {
+        score += 20;
+      } else if (cell === 'platform' || cell === 'plateform' || cell === 'portal' || cell === 'marketplace') {
+        score += 15;
+      } else if (cell.includes('link') || cell.includes('url')) {
+        score += 10;
+      } else if (cell.includes('price') || cell.includes('rate') || cell.includes('mrp') || cell.includes('amount')) {
+        score += 10;
+      } else if (cell === 'vender' || cell === 'vendor' || cell === 'website' || cell === 'b2b' || cell === 'shop' || cell === 'bholo') {
+        score += 15;
+      } else if (cell === 'sr' || cell === 'sr no' || cell === 'sr. no' || cell === 'no' || cell === 'id') {
+        score += 2;
+      }
+    });
+
+    if (score > maxScore) {
+      maxScore = score;
+      bestRowIndex = r;
+    }
+  }
+
+  return maxScore >= 10 ? bestRowIndex : 0;
+}
+
+// Priority-based column detection (Prevents Sr No from being picked over Design No)
+function identifyColumns(allHeaders) {
+  let skuKey = null;
+  let platformKey = null;
+  let linkKey = null;
+  let priceKey = null;
+  let statusKey = null;
+
+  // PRIORITY 1: High confidence SKU / Design columns
+  for (const h of allHeaders) {
+    const lower = h.trim().toLowerCase();
+    if (lower.includes('design') || lower.includes('sku') || lower.includes('d.no') || 
+        lower.includes('dno') || lower.includes('style') || lower.includes('art no') || 
+        lower.includes('article') || lower.includes('item code') || lower.includes('product code') || 
+        lower.includes('pattern') || lower.includes('catalog')) {
+      skuKey = h;
+      break;
+    }
+  }
+
+  // PRIORITY 2: Secondary item/code columns
+  if (!skuKey) {
+    for (const h of allHeaders) {
+      const lower = h.trim().toLowerCase();
+      if (lower.includes('item') || lower.includes('code') || lower.includes('model')) {
+        skuKey = h;
+        break;
+      }
+    }
+  }
+
+  // PRIORITY 3: Fallback ONLY if no better column exists
+  if (!skuKey) {
+    for (const h of allHeaders) {
+      const lower = h.trim().toLowerCase();
+      if (lower === 'no' || lower === 'no.' || lower === 'id' || lower === 'sr' || lower === 'sr no' || lower === 'sr. no') {
+        skuKey = h;
+        break;
+      }
+    }
+  }
+
+  if (!skuKey && allHeaders.length > 0) {
+    skuKey = allHeaders[0];
+  }
+
+  allHeaders.forEach(h => {
+    if (h === skuKey) return;
+    const lower = h.trim().toLowerCase();
+
+    // Platform
+    if (!platformKey && (lower === 'platform' || lower === 'plateform' || lower === 'platfrom' || 
+        lower === 'portal' || lower === 'channel' || lower === 'marketplace' || lower === 'site' || 
+        lower === 'platform name' || lower === 'plateform name')) {
+      platformKey = h;
+    }
+    // Link / URL
+    else if (!linkKey && (lower === 'link' || lower === 'url' || lower === 'note' || lower === 'notes' || 
+             lower === 'web link' || lower === 'product link' || lower === 'listing link' || 
+             lower === 'listing' || lower === 'href' || lower.includes('link') || lower.includes('url'))) {
+      linkKey = h;
+    }
+    // Price
+    else if (!priceKey && (lower.includes('price') || lower.includes('rate') || lower.includes('amount') || 
+             lower.includes('cost') || lower.includes('mrp') || lower === 'sp')) {
+      priceKey = h;
+    }
+    // Status
+    else if (!statusKey && lower.includes('status')) {
+      statusKey = h;
+    }
+  });
+
+  return { skuKey, platformKey, linkKey, priceKey, statusKey };
+}
+
+// Intelligent Multi-Sheet Workbook Parsing
 function processExcelWorkbook(workbook) {
   parsedExcelEntries = [];
   const defaultPlatform = (currentUser && currentUser.role === 'platform' && currentUser.permissions?.platforms?.[0]) || (platforms[0] || 'vender');
@@ -2120,19 +2337,21 @@ function processExcelWorkbook(workbook) {
     return;
   }
 
-  const parsedItemsMap = new Map(); // Key: `${sku.toLowerCase()}__${platform.toLowerCase()}`
+  const parsedItemsMap = new Map(); // Key: `${normSku}__${normPlat}`
 
   function getOrInitEntry(sku, platform) {
-    const cleanSku = String(sku).trim();
-    const cleanPlatform = String(platform).trim();
-    if (!cleanSku || cleanSku === '-' || cleanSku.toLowerCase() === 'design name / no.' || cleanSku.toLowerCase() === 'design no') return null;
-    if (!cleanPlatform || cleanPlatform === '-') return null;
+    const cleanSku = cleanSkuString(sku);
+    if (!cleanSku || isHeaderOrPlaceholderSku(cleanSku)) return null;
+    
+    const resolvedPlat = resolvePlatformName(platform) || defaultPlatform;
+    const normSku = normalizeKeyStr(cleanSku);
+    const normPlat = normalizeKeyStr(resolvedPlat);
+    const key = `${normSku}__${normPlat}`;
 
-    const key = `${cleanSku.toLowerCase()}__${cleanPlatform.toLowerCase()}`;
     if (!parsedItemsMap.has(key)) {
       parsedItemsMap.set(key, {
         sku: cleanSku,
-        platform: cleanPlatform,
+        platform: resolvedPlat,
         link: '',
         price: '1',
         status: ''
@@ -2141,135 +2360,71 @@ function processExcelWorkbook(workbook) {
     return parsedItemsMap.get(key);
   }
 
-  // Robust entry lookup helper
-  function findMatchedEntry(sku, platHeader) {
-    const cleanSku = String(sku).trim().toLowerCase();
-    const cleanPlat = String(platHeader).trim().toLowerCase();
-    const platCleaned = extractPlatformFromHeader(platHeader).trim().toLowerCase();
+  // Parse ALL sheets in workbook to capture all data
+  sheetNames.forEach(sheetName => {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) return;
 
-    // 1. Exact key match
-    if (parsedItemsMap.has(`${cleanSku}__${cleanPlat}`)) {
-      return parsedItemsMap.get(`${cleanSku}__${cleanPlat}`);
-    }
-    // 2. Cleaned platform header match
-    if (parsedItemsMap.has(`${cleanSku}__${platCleaned}`)) {
-      return parsedItemsMap.get(`${cleanSku}__${platCleaned}`);
-    }
-
-    // 3. Normalized alphanumeric match
-    const normSku = normalizeKeyStr(sku);
-    const normPlat = normalizeKeyStr(platHeader);
-    const normPlatCleaned = normalizeKeyStr(platCleaned);
-
-    for (const [key, entry] of parsedItemsMap.entries()) {
-      if (normalizeKeyStr(entry.sku) === normSku) {
-        const entryPlatNorm = normalizeKeyStr(entry.platform);
-        if (entryPlatNorm === normPlat || entryPlatNorm === normPlatCleaned || entryPlatNorm.includes(normPlat) || normPlat.includes(entryPlatNorm)) {
-          return entry;
-        }
-      }
-    }
-    return null;
-  }
-
-  // Check if there is a dedicated 'Links' or 'Link' sheet in the workbook
-  const linksSheetName = sheetNames.find(s => s.trim().toLowerCase() === 'links' || s.trim().toLowerCase() === 'link' || s.toLowerCase().includes('link'));
-
-  // Function to parse a sheet with (Design No, Platform, Link) columns
-  function parseFlatSheet(sheet) {
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const headerRowIndex = detectHeaderRowIndex(sheet);
+    const rows = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: '' });
     if (!rows || rows.length === 0) return;
 
-    const sampleRow = rows[0];
-    const allHeaders = Object.keys(sampleRow);
+    const allHeaders = Object.keys(rows[0] || {});
+    if (allHeaders.length === 0) return;
 
-    let skuKey = null;
-    let platformKey = null;
-    let linkKey = null;
-    let priceKey = null;
-    let statusKey = null;
-
-    allHeaders.forEach(header => {
-      const h = header.trim().toLowerCase();
-      
-      // Platform Column header matching (handles plateform, platform, platfrom, etc.)
-      if (h === 'platform' || h === 'plateform' || h === 'platfrom' || h === 'portal' || 
-          h === 'channel' || h === 'marketplace' || h === 'site' || h === 'platform name' || 
-          h === 'plateform name' || h.startsWith('plat')) {
-        platformKey = header;
-      }
-      // SKU Column header matching
-      else if (h.includes('design') || h.includes('sku') || h.includes('item') || 
-               h.includes('code') || h.includes('model') || h === 'no' || h === 'no.' || 
-               h === 'sr' || h === 'sr no' || h === 'id' || h === 'd.no' || h === 'dno') {
-        if (!skuKey) skuKey = header;
-      }
-      // Link / Note Column header matching
-      else if (h === 'link' || h === 'url' || h === 'note' || h === 'notes' || 
-               h === 'web link' || h === 'product link' || h === 'listing link' || 
-               h === 'listing' || h === 'href' || h.includes('link') || h.includes('url')) {
-        linkKey = header;
-      }
-      // Price Column header matching
-      else if (h.includes('price') || h.includes('rate') || h.includes('amount') || h.includes('cost') || h.includes('mrp')) {
-        priceKey = header;
-      }
-      // Status Column header matching
-      else if (h.includes('status')) {
-        statusKey = header;
-      }
-    });
-
-    if (!skuKey && allHeaders.length > 0) skuKey = allHeaders[0];
+    const { skuKey, platformKey, linkKey, priceKey, statusKey } = identifyColumns(allHeaders);
+    if (!skuKey) return;
 
     rows.forEach(row => {
-      const rawSku = skuKey ? row[skuKey] : row[allHeaders[0]];
-      const sku = String(rawSku !== undefined && rawSku !== null ? rawSku : '').trim();
-
-      if (!sku || sku === '-' || sku.toLowerCase() === 'design no' || sku.toLowerCase() === 'design name / no.' || sku.toLowerCase() === 'sku') {
-        return;
-      }
+      const rawSku = row[skuKey];
+      const sku = cleanSkuString(rawSku);
+      if (!sku || isHeaderOrPlaceholderSku(sku)) return;
 
       if (platformKey) {
-        // Dedicated platform column
+        // Flat sheet structure: Dedicated Platform column exists
         const rawPlatform = row[platformKey];
-        const platform = String(rawPlatform !== undefined && rawPlatform !== null ? rawPlatform : '').trim();
-        
-        const rawLink = linkKey ? row[linkKey] : '';
-        const link = String(rawLink !== undefined && rawLink !== null ? rawLink : '').trim();
+        const platform = resolvePlatformName(rawPlatform) || defaultPlatform;
 
+        const rawLink = linkKey ? String(row[linkKey] || '').trim() : '';
         const rawPrice = priceKey ? row[priceKey] : '';
         const numPrice = extractPrice(rawPrice);
+        const rawStatus = statusKey ? parseStatusValue(row[statusKey]) : '';
 
-        const rawStatus = statusKey ? row[statusKey] : '';
-        const status = String(rawStatus !== undefined && rawStatus !== null ? rawStatus : '').trim();
-
-        // Skip rows without platform and link
-        if (!platform && !link) return;
-        if (link === 'No links available' || link === '-') return;
-
-        const finalPlatform = platform || defaultPlatform;
-        const entry = getOrInitEntry(sku, finalPlatform);
+        const entry = getOrInitEntry(sku, platform);
         if (entry) {
-          if (link && link !== '-') entry.link = link;
-          if (numPrice) entry.price = numPrice;
-          if (status) entry.status = status;
+          if (rawLink && rawLink !== '-' && rawLink.toLowerCase() !== 'no links available') {
+            entry.link = rawLink;
+          }
+          if (numPrice) {
+            entry.price = numPrice;
+          }
+          if (rawStatus) {
+            entry.status = rawStatus;
+          }
         }
       } else {
-        // Multi-column or matrix
+        // Matrix / Multi-column structure (Platforms or links as column headers)
+        let rowHasValidData = false;
+
         allHeaders.forEach(header => {
           if (header === skuKey || header === statusKey || header === priceKey) return;
           const val = String(row[header] !== undefined && row[header] !== null ? row[header] : '').trim();
-          if (!val || val === '-' || val === 'No links available') return;
+          if (!val || val === '-' || val.toLowerCase() === 'no links available') return;
 
           if (header === linkKey) {
+            // Dedicated single link column without platform column -> apply to default platform
             const entry = getOrInitEntry(sku, defaultPlatform);
-            if (entry) entry.link = val;
+            if (entry) {
+              entry.link = val;
+              rowHasValidData = true;
+            }
           } else {
-            const platName = extractPlatformFromHeader(header);
-            if (platName && platName.toLowerCase() !== 'description' && platName.toLowerCase() !== 'photo' && platName.toLowerCase() !== 'image') {
+            // Column header is likely a platform name (e.g., "vender", "Amazon Link", "website", "shop")
+            const platName = resolvePlatformName(header);
+            if (platName && !['description', 'photo', 'image', 'sr', 'sr no', 'category', 'remark'].includes(platName.toLowerCase())) {
               const entry = getOrInitEntry(sku, platName);
               if (entry) {
+                rowHasValidData = true;
                 if (isLinkValue(val) || header.toLowerCase().includes('link') || header.toLowerCase().includes('url') || header.toLowerCase().includes('note')) {
                   entry.link = val;
                 } else {
@@ -2284,74 +2439,43 @@ function processExcelWorkbook(workbook) {
             }
           }
         });
-      }
-    });
-  }
 
-  // 1. If Links sheet exists, parse it first!
-  if (linksSheetName) {
-    parseFlatSheet(workbook.Sheets[linksSheetName]);
+        // Capture general price/status from sheet row if present
+        const generalPrice = priceKey ? extractPrice(row[priceKey]) : null;
+        const generalStatus = statusKey ? parseStatusValue(row[statusKey]) : '';
 
-    // 2. Parse prices from all other sheets (e.g. 'Pending Designs', 'Completed Designs', etc.)
-    const nonLinkSheets = sheetNames.filter(s => s !== linksSheetName);
-    nonLinkSheets.forEach(sheetName => {
-      const pSheet = workbook.Sheets[sheetName];
-      if (!pSheet) return;
-      const pRows = XLSX.utils.sheet_to_json(pSheet, { defval: '' });
-      if (!pRows || pRows.length === 0) return;
-
-      const pHeaders = Object.keys(pRows[0]);
-      let pSkuKey = pHeaders.find(h => {
-        const lower = h.trim().toLowerCase();
-        return lower.includes('design') || lower.includes('sku') || lower.includes('item') || 
-               lower.includes('code') || lower.includes('d.no') || lower.includes('dno') || 
-               lower === 'no' || lower === 'no.' || lower === 'sr' || lower === 'sr no';
-      }) || pHeaders[0];
-
-      pRows.forEach(pRow => {
-        const rawSku = pRow[pSkuKey];
-        const pSku = String(rawSku !== undefined && rawSku !== null ? rawSku : '').trim();
-        if (!pSku || pSku === '-' || pSku.toLowerCase() === 'design name / no.' || pSku.toLowerCase() === 'design no' || pSku.toLowerCase() === 'sku') return;
-
-        pHeaders.forEach(pH => {
-          if (pH === pSkuKey) return;
-          const pVal = pRow[pH];
-          const numPrice = extractPrice(pVal);
-          if (numPrice) {
-            let matchedEntry = findMatchedEntry(pSku, pH);
-            if (matchedEntry) {
-              matchedEntry.price = numPrice;
-            } else if (parseFloat(numPrice) > 1) {
-              const platName = extractPlatformFromHeader(pH);
-              if (platName && platName.toLowerCase() !== 'description' && platName.toLowerCase() !== 'photo' && platName.toLowerCase() !== 'image') {
-                const newEntry = getOrInitEntry(pSku, platName);
-                if (newEntry) {
-                  newEntry.price = numPrice;
-                }
-              }
+        if (!rowHasValidData) {
+          // If no platform columns had values, register under defaultPlatform so design is NOT dropped!
+          const entry = getOrInitEntry(sku, defaultPlatform);
+          if (entry) {
+            if (generalPrice) entry.price = generalPrice;
+            if (generalStatus) entry.status = generalStatus;
+          }
+        } else if (generalPrice || generalStatus) {
+          // Update all entries for this SKU in current row
+          for (const [k, e] of parsedItemsMap.entries()) {
+            if (normalizeKeyStr(e.sku) === normalizeKeyStr(sku)) {
+              if (generalPrice && (!e.price || e.price === '1')) e.price = generalPrice;
+              if (generalStatus && !e.status) e.status = generalStatus;
             }
           }
-        });
-      });
+        }
+      }
     });
-  } else {
-    // If no dedicated Links sheet, parse all sheets
-    sheetNames.forEach(sheetName => {
-      parseFlatSheet(workbook.Sheets[sheetName]);
-    });
-  }
+  });
 
-  parsedExcelEntries = Array.from(parsedItemsMap.values()).filter(item => item && item.sku && (item.link || item.price));
+  // Filter out invalid items, but keep entries even if link is still pending
+  parsedExcelEntries = Array.from(parsedItemsMap.values()).filter(item => item && item.sku && !isHeaderOrPlaceholderSku(item.sku));
 
   if (parsedExcelEntries.length === 0) {
-    alert("No valid design rows with links could be parsed from this Excel file.");
+    alert("Could not detect any valid Design SKU rows in this Excel file. Please ensure your Excel sheet has a column for 'Design No' or 'SKU'.");
     return;
   }
 
   renderExcelPreview();
 }
 
-// Render Preview Table
+// Render Preview Table (Shows rows with Links at top so user sees all filled data immediately)
 function renderExcelPreview() {
   const previewContainer = document.getElementById('excelPreviewContainer');
   const rowCountEl = document.getElementById('excelPreviewRowCount');
@@ -2361,10 +2485,18 @@ function renderExcelPreview() {
 
   if (!previewContainer || !tbody) return;
 
+  // Sort: Entries WITH links come first!
+  const sortedEntries = [...parsedExcelEntries].sort((a, b) => {
+    const aHas = (a.link && a.link.trim() !== '') ? 1 : 0;
+    const bHas = (b.link && b.link.trim() !== '') ? 1 : 0;
+    return bHas - aHas;
+  });
+
   let updateCount = 0;
   let newCount = 0;
+  let withLinksCount = 0;
 
-  const rowsHtml = parsedExcelEntries.map((item, idx) => {
+  const rowsHtml = sortedEntries.map((item, idx) => {
     const matchedDesign = findDesignBySku(item.sku);
     const isExisting = !!matchedDesign;
     if (isExisting) {
@@ -2373,23 +2505,34 @@ function renderExcelPreview() {
       newCount++;
     }
 
+    const hasLink = item.link && item.link.trim() !== '';
+    if (hasLink) withLinksCount++;
+
     return `
-      <tr>
-        <td style="color: var(--text-muted); font-size: 0.75rem;">${idx + 1}</td>
-        <td style="font-weight: 700; color: #1e293b;">${item.sku} ${matchedDesign && matchedDesign.sku !== item.sku ? `<span style="color: #64748b; font-size: 0.75rem; font-weight: normal;">(${matchedDesign.sku})</span>` : ''}</td>
+      <tr style="${hasLink ? 'background: #f0fdf4;' : ''}">
+        <td style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600;">${idx + 1}</td>
+        <td style="font-weight: 700; color: #1e293b;">
+          ${item.sku} ${matchedDesign && matchedDesign.sku !== item.sku ? `<span style="color: #64748b; font-size: 0.75rem; font-weight: normal;">(${matchedDesign.sku})</span>` : ''}
+        </td>
         <td>
           <span style="display: inline-block; background: #e0f2fe; color: #0284c7; padding: 0.15rem 0.5rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">
             ${item.platform}
           </span>
         </td>
-        <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          ${item.link ? `<a href="${item.link}" target="_blank" style="color: var(--accent-primary); text-decoration: underline;">${item.link}</a>` : `<span style="color: var(--text-muted); font-style: italic;">No Link</span>`}
+        <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${hasLink 
+            ? `<a href="${item.link}" target="_blank" style="color: #15803d; font-weight: 600; text-decoration: underline;" title="${item.link}"><i data-lucide="external-link" style="width: 12px; height: 12px; display: inline;"></i> ${item.link}</a>` 
+            : `<span style="color: #94a3b8; font-style: italic; font-size: 0.8rem;">No Link (Pending)</span>`
+          }
         </td>
         <td style="font-weight: 600;">₹${item.price || '1'}</td>
         <td>
-          ${isExisting 
-            ? `<span class="badge-action-update"><i data-lucide="refresh-cw" style="width: 11px; height: 11px; display: inline;"></i> Update Existing</span>`
-            : `<span class="badge-action-new"><i data-lucide="plus" style="width: 11px; height: 11px; display: inline;"></i> New Design</span>`
+          ${hasLink
+            ? `<span style="display: inline-flex; align-items: center; gap: 3px; background: #dcfce7; color: #15803d; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 700;"><i data-lucide="check-circle-2" style="width: 11px; height: 11px;"></i> Link Ready</span>`
+            : (isExisting 
+                ? `<span class="badge-action-update"><i data-lucide="refresh-cw" style="width: 11px; height: 11px; display: inline;"></i> Update SKU</span>`
+                : `<span class="badge-action-new"><i data-lucide="plus" style="width: 11px; height: 11px; display: inline;"></i> New Design</span>`
+              )
           }
         </td>
       </tr>
@@ -2398,15 +2541,20 @@ function renderExcelPreview() {
 
   tbody.innerHTML = rowsHtml;
   rowCountEl.innerText = parsedExcelEntries.length;
-  statsEl.innerHTML = `<span style="color: #b45309; font-weight: 700;">${updateCount} to Update</span> &bull; <span style="color: #15803d; font-weight: 700;">${newCount} New</span>`;
+  
+  const withoutLinksCount = parsedExcelEntries.length - withLinksCount;
+  statsEl.innerHTML = `<span style="color: #15803d; font-weight: 800; font-size: 0.85rem;"><i data-lucide="link" style="width: 13px; height: 13px; display: inline;"></i> ${withLinksCount} Links Ready to Sync</span> &bull; <span style="color: #64748b; font-size: 0.8rem;">${withoutLinksCount} Pending (No link)</span> &bull; <span style="color: #0284c7; font-weight: 700; font-size: 0.8rem;">${updateCount} to Update</span>`;
   
   previewContainer.style.display = 'block';
-  if (submitBtn) submitBtn.disabled = false;
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = `<i data-lucide="check"></i> Confirm & Import (${withLinksCount} Links, ${parsedExcelEntries.length} Total Rows)`;
+  }
 
   lucide.createIcons();
 }
 
-// Execute Import and Save
+// Execute Import and Save (with collision-free ID generation)
 window.executeExcelImport = async function() {
   if (!parsedExcelEntries || parsedExcelEntries.length === 0) {
     alert("No data to import.");
@@ -2414,9 +2562,11 @@ window.executeExcelImport = async function() {
   }
 
   const submitBtn = document.getElementById('excelImportSubmitBtn');
-  const originalBtnText = submitBtn.innerHTML;
-  submitBtn.disabled = true;
-  submitBtn.innerHTML = 'Importing & Saving...';
+  const originalBtnText = submitBtn ? submitBtn.innerHTML : 'Confirm & Import Excel';
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = 'Importing & Saving...';
+  }
 
   try {
     const markCompleted = document.getElementById('excelMarkCompletedCheckbox')?.checked ?? true;
@@ -2426,12 +2576,16 @@ window.executeExcelImport = async function() {
     let createdDesignsCount = 0;
     let updatedLinksCount = 0;
     let newPlatformsAdded = 0;
+    let idCounter = 0;
 
     // 1. Auto-register any brand new platforms found in Excel
     parsedExcelEntries.forEach(entry => {
-      if (entry.platform && !platforms.some(p => p.toLowerCase() === entry.platform.toLowerCase() || normalizeKeyStr(p) === normalizeKeyStr(entry.platform))) {
-        platforms.push(entry.platform);
-        newPlatformsAdded++;
+      if (entry.platform) {
+        const resolved = resolvePlatformName(entry.platform);
+        if (!platforms.some(p => p.toLowerCase() === resolved.toLowerCase() || normalizeKeyStr(p) === normalizeKeyStr(resolved))) {
+          platforms.push(resolved);
+          newPlatformsAdded++;
+        }
       }
     });
 
@@ -2460,7 +2614,7 @@ window.executeExcelImport = async function() {
           if (!targetPlat) {
             // Platform not yet attached to this design, add it!
             targetPlat = {
-              name: entry.platform,
+              name: resolvePlatformName(entry.platform),
               status: 'pending',
               note: '',
               price: entry.price || '1'
@@ -2482,14 +2636,14 @@ window.executeExcelImport = async function() {
           }
 
           // Update price if present and valid
-          if (entry.price && parseFloat(entry.price) > 0) {
+          if (entry.price && parseFloat(entry.price) >= 0) {
             targetPlat.price = String(entry.price);
             changed = true;
           }
 
           // Explicit status override if present in excel
-          if (entry.status && (entry.status.toLowerCase() === 'completed' || entry.status.toLowerCase() === 'pending')) {
-            targetPlat.status = entry.status.toLowerCase();
+          if (entry.status && (entry.status === 'completed' || entry.status === 'pending')) {
+            targetPlat.status = entry.status;
             changed = true;
           }
         });
@@ -2498,17 +2652,30 @@ window.executeExcelImport = async function() {
           updatedDesignsCount++;
         }
       } else if (createMissing) {
-        // CREATE NEW DESIGN
-        const newDesignId = String(Date.now() + Math.floor(Math.random() * 1000));
+        // CREATE NEW DESIGN (Unique ID guaranteed to prevent Firebase/array overwrite)
+        idCounter++;
+        const newDesignId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}_${idCounter}`;
         const activePlatformsList = (platforms && platforms.length > 0) ? platforms : ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
 
         // Initialize platforms for new design
         const designPlatforms = activePlatformsList.map(pName => {
-          const matchedEntry = entries.find(e => e.platform.toLowerCase() === pName.toLowerCase() || normalizeKeyStr(e.platform) === normalizeKeyStr(pName));
+          const matchedEntry = entries.find(e => {
+            const ePlat = resolvePlatformName(e.platform);
+            return ePlat.toLowerCase() === pName.toLowerCase() || normalizeKeyStr(ePlat) === normalizeKeyStr(pName);
+          });
           const hasLink = matchedEntry && matchedEntry.link && matchedEntry.link.trim() !== '';
+          const explicitStatus = matchedEntry ? matchedEntry.status : '';
+          
+          let status = 'pending';
+          if (explicitStatus) {
+            status = explicitStatus;
+          } else if (hasLink && markCompleted) {
+            status = 'completed';
+          }
+
           return {
             name: pName,
-            status: (hasLink && markCompleted) ? 'completed' : 'pending',
+            status: status,
             note: matchedEntry ? (matchedEntry.link || '') : '',
             price: matchedEntry ? (matchedEntry.price || '1') : '1'
           };
@@ -2516,10 +2683,19 @@ window.executeExcelImport = async function() {
 
         // Add any additional platforms from entries that might not be in activePlatformsList
         entries.forEach(entry => {
-          if (!designPlatforms.some(p => p.name.toLowerCase() === entry.platform.toLowerCase() || normalizeKeyStr(p.name) === normalizeKeyStr(entry.platform))) {
+          const resolved = resolvePlatformName(entry.platform);
+          if (!designPlatforms.some(p => p.name.toLowerCase() === resolved.toLowerCase() || normalizeKeyStr(p.name) === normalizeKeyStr(resolved))) {
+            const hasLink = entry.link && entry.link.trim() !== '';
+            let status = 'pending';
+            if (entry.status) {
+              status = entry.status;
+            } else if (hasLink && markCompleted) {
+              status = 'completed';
+            }
+
             designPlatforms.push({
-              name: entry.platform,
-              status: (entry.link && markCompleted) ? 'completed' : 'pending',
+              name: resolved,
+              status: status,
               note: entry.link || '',
               price: entry.price || '1'
             });
@@ -2543,7 +2719,7 @@ window.executeExcelImport = async function() {
     });
 
     // Save to IndexedDB (localforage) and Firebase
-    await saveData();
+    saveData();
 
     // Re-render all views and dropdowns
     renderPlatformSelect();
@@ -2551,7 +2727,7 @@ window.executeExcelImport = async function() {
     renderGrids();
 
     let msg = `Excel Import Successful!\n\n`;
-    msg += `• ${updatedDesignsCount} designs updated with links & platforms\n`;
+    msg += `• ${updatedDesignsCount} existing designs updated with links & prices\n`;
     if (createdDesignsCount > 0) msg += `• ${createdDesignsCount} new designs created\n`;
     msg += `• ${updatedLinksCount} total links synchronized.`;
     if (newPlatformsAdded > 0) msg += `\n• ${newPlatformsAdded} new platform(s) registered automatically.`;
@@ -2561,7 +2737,7 @@ window.executeExcelImport = async function() {
     closeExcelUploadModal();
   } catch (err) {
     console.error("Error executing Excel import:", err);
-    alert("An error occurred during import. Please check console for details.");
+    alert("An error occurred during import: " + (err.message || "Please check console for details."));
   } finally {
     if (submitBtn) {
       submitBtn.disabled = false;
@@ -2569,4 +2745,3 @@ window.executeExcelImport = async function() {
     }
   }
 };
-
