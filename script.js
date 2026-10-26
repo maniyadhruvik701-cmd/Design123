@@ -2461,70 +2461,91 @@ window.exportPendingToExcel = function () {
     });
   });
 
-  const data = [];
-  const notesData = [];
+  if (pending.length === 0) {
+    alert(`No pending designs to export${category !== 'all' ? ` for ${category}` : ''}.`);
+    return;
+  }
 
-  pending.forEach(d => {
-    let relevantPlatforms = d.platforms;
-    if (isPlatformUser) {
-      relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
-    }
-    if (category !== 'all') {
-      relevantPlatforms = relevantPlatforms.filter(p => getPlatformCategory(p.name) === category);
-    }
-    relevantPlatforms = relevantPlatforms.filter(p => p.status === 'pending');
+  // Get all active platforms for this category in consistent, deterministic order
+  let categoryPlats = platforms.filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
+  if (isPlatformUser) {
+    categoryPlats = categoryPlats.filter(p => (currentUser.permissions?.platforms || []).includes(p));
+  }
+  if (category !== 'all') {
+    categoryPlats = categoryPlats.filter(p => getPlatformCategory(p) === category);
+  }
 
-    // Create a row object starting with the Design ID for Sheet 1
+  // Build Sheet 1: Prices (Multi-Platform Columns)
+  const priceRows = pending.map(d => {
     const row = {
       "Design Name / No.": d.sku
     };
-
-    if (relevantPlatforms && relevantPlatforms.length > 0) {
-      // Add each platform as a separate column, and its value as the price
-      relevantPlatforms.forEach(p => {
-        row[p.name] = p.price || 0;
-
-        // Collect links/notes for Sheet 2
-        notesData.push({
-          "Design Name / No.": d.sku,
-          "Platform": p.name,
-          "Link": (p.note && p.note.trim() !== '') ? p.note.trim() : ""
-        });
-      });
-    } else {
-      notesData.push({
-        "Design Name / No.": d.sku,
-        "Platform": "",
-        "Link": ""
-      });
-    }
-
-    data.push(row);
+    categoryPlats.forEach(platName => {
+      const matched = (d.platforms || []).find(p => p.name.toLowerCase() === platName.toLowerCase());
+      if (matched && matched.status === 'pending') {
+        let cleanPrice = parseFloat(matched.price);
+        if (isNaN(cleanPrice) || cleanPrice <= 0) {
+          cleanPrice = parseFloat(d.price);
+          if (isNaN(cleanPrice) || cleanPrice <= 0) {
+            cleanPrice = 1;
+          }
+        }
+        row[platName] = cleanPrice;
+      } else {
+        row[platName] = "-";
+      }
+    });
+    return row;
   });
 
-  if (data.length === 0) {
-    alert(`No pending designs to export${category !== 'all' ? ` for ${category}` : ''}.`);
-    return;
+  // Build Sheet 2: Links
+  const linkRows = [];
+  pending.forEach(d => {
+    categoryPlats.forEach(platName => {
+      const matched = (d.platforms || []).find(p => p.name.toLowerCase() === platName.toLowerCase());
+      if (matched) {
+        let linkVal = '';
+        if (matched.note && String(matched.note).trim() !== '') {
+          linkVal = String(matched.note).trim();
+        } else if (matched.link && String(matched.link).trim() !== '') {
+          linkVal = String(matched.link).trim();
+        } else if (matched.url && String(matched.url).trim() !== '') {
+          linkVal = String(matched.url).trim();
+        } else if (d.link && String(d.link).trim() !== '') {
+          linkVal = String(d.link).trim();
+        }
+
+        linkRows.push({
+          "Design Name / No.": d.sku,
+          "Platform": platName,
+          "Link": linkVal
+        });
+      }
+    });
+  });
+
+  if (linkRows.length === 0) {
+    linkRows.push({
+      "Design Name / No.": "-",
+      "Platform": "-",
+      "Link": ""
+    });
   }
 
   const wb = XLSX.utils.book_new();
 
   // Sheet 1: Prices
-  const ws1 = XLSX.utils.json_to_sheet(data);
-  ws1['!cols'] = [{ wch: 22 }];
-  const sheetTitle = category === 'all' ? "Pending Designs" : `Pending ${category.toUpperCase()}`;
-  XLSX.utils.book_append_sheet(wb, ws1, sheetTitle);
+  const ws1 = XLSX.utils.json_to_sheet(priceRows);
+  const cols1 = [{ wch: 22 }];
+  categoryPlats.forEach(() => cols1.push({ wch: 16 }));
+  ws1['!cols'] = cols1;
+  const sheetTitle1 = category === 'all' ? "Prices" : `Prices (${category.toUpperCase()})`;
+  XLSX.utils.book_append_sheet(wb, ws1, sheetTitle1);
 
-  // Sheet 2: Links/Notes
-  if (notesData.length > 0) {
-    const ws2 = XLSX.utils.json_to_sheet(notesData);
-    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
-    XLSX.utils.book_append_sheet(wb, ws2, "Links");
-  } else {
-    const ws2 = XLSX.utils.json_to_sheet([{ "Design Name / No.": "-", "Platform": "-", "Link": "" }]);
-    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
-    XLSX.utils.book_append_sheet(wb, ws2, "Links");
-  }
+  // Sheet 2: Links
+  const ws2 = XLSX.utils.json_to_sheet(linkRows);
+  ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 60 }];
+  XLSX.utils.book_append_sheet(wb, ws2, "Links");
 
   const filename = category === 'all' ? "Pending_Designs.xlsx" : `Pending_Designs_${category.charAt(0).toUpperCase() + category.slice(1)}.xlsx`;
   XLSX.writeFile(wb, filename);
@@ -2553,72 +2574,91 @@ window.exportCompletedToExcel = function () {
     });
   });
 
-  const data = [];
-  const notesData = [];
+  if (completed.length === 0) {
+    alert(`No completed designs to export${category !== 'all' ? ` for ${category}` : ''}.`);
+    return;
+  }
 
-  completed.forEach(d => {
-    let relevantPlatforms = d.platforms;
-    if (isPlatformUser) {
-      relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
-    }
-    if (category !== 'all') {
-      relevantPlatforms = relevantPlatforms.filter(p => getPlatformCategory(p.name) === category);
-    }
+  // Get all active platforms for this category in consistent, deterministic order
+  let categoryPlats = platforms.filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
+  if (isPlatformUser) {
+    categoryPlats = categoryPlats.filter(p => (currentUser.permissions?.platforms || []).includes(p));
+  }
+  if (category !== 'all') {
+    categoryPlats = categoryPlats.filter(p => getPlatformCategory(p) === category);
+  }
 
-    // Only include platforms that are actually completed
-    relevantPlatforms = relevantPlatforms.filter(p => p.status === 'completed');
-
-    // Create a row object starting with the Design ID for Sheet 1
+  // Build Sheet 1: Prices (Multi-Platform Columns)
+  const priceRows = completed.map(d => {
     const row = {
       "Design Name / No.": d.sku
     };
-
-    if (relevantPlatforms && relevantPlatforms.length > 0) {
-      // Add each platform as a separate column, and its value as the price
-      relevantPlatforms.forEach(p => {
-        row[p.name] = p.price || 0;
-
-        // Collect links/notes for Sheet 2
-        notesData.push({
-          "Design Name / No.": d.sku,
-          "Platform": p.name,
-          "Link": (p.note && p.note.trim() !== '') ? p.note.trim() : ""
-        });
-      });
-    } else {
-      notesData.push({
-        "Design Name / No.": d.sku,
-        "Platform": "",
-        "Link": ""
-      });
-    }
-
-    data.push(row);
+    categoryPlats.forEach(platName => {
+      const matched = (d.platforms || []).find(p => p.name.toLowerCase() === platName.toLowerCase());
+      if (matched && matched.status === 'completed') {
+        let cleanPrice = parseFloat(matched.price);
+        if (isNaN(cleanPrice) || cleanPrice <= 0) {
+          cleanPrice = parseFloat(d.price);
+          if (isNaN(cleanPrice) || cleanPrice <= 0) {
+            cleanPrice = 1;
+          }
+        }
+        row[platName] = cleanPrice;
+      } else {
+        row[platName] = "-";
+      }
+    });
+    return row;
   });
 
-  if (data.length === 0) {
-    alert(`No completed designs to export${category !== 'all' ? ` for ${category}` : ''}.`);
-    return;
+  // Build Sheet 2: Links
+  const linkRows = [];
+  completed.forEach(d => {
+    categoryPlats.forEach(platName => {
+      const matched = (d.platforms || []).find(p => p.name.toLowerCase() === platName.toLowerCase());
+      if (matched) {
+        let linkVal = '';
+        if (matched.note && String(matched.note).trim() !== '') {
+          linkVal = String(matched.note).trim();
+        } else if (matched.link && String(matched.link).trim() !== '') {
+          linkVal = String(matched.link).trim();
+        } else if (matched.url && String(matched.url).trim() !== '') {
+          linkVal = String(matched.url).trim();
+        } else if (d.link && String(d.link).trim() !== '') {
+          linkVal = String(d.link).trim();
+        }
+
+        linkRows.push({
+          "Design Name / No.": d.sku,
+          "Platform": platName,
+          "Link": linkVal
+        });
+      }
+    });
+  });
+
+  if (linkRows.length === 0) {
+    linkRows.push({
+      "Design Name / No.": "-",
+      "Platform": "-",
+      "Link": ""
+    });
   }
 
   const wb = XLSX.utils.book_new();
 
   // Sheet 1: Prices
-  const ws1 = XLSX.utils.json_to_sheet(data);
-  ws1['!cols'] = [{ wch: 22 }];
-  const sheetTitle = category === 'all' ? "Completed Designs" : `Completed ${category.toUpperCase()}`;
-  XLSX.utils.book_append_sheet(wb, ws1, sheetTitle);
+  const ws1 = XLSX.utils.json_to_sheet(priceRows);
+  const cols1 = [{ wch: 22 }];
+  categoryPlats.forEach(() => cols1.push({ wch: 16 }));
+  ws1['!cols'] = cols1;
+  const sheetTitle1 = category === 'all' ? "Prices" : `Prices (${category.toUpperCase()})`;
+  XLSX.utils.book_append_sheet(wb, ws1, sheetTitle1);
 
-  // Sheet 2: Links/Notes
-  if (notesData.length > 0) {
-    const ws2 = XLSX.utils.json_to_sheet(notesData);
-    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
-    XLSX.utils.book_append_sheet(wb, ws2, "Links");
-  } else {
-    const ws2 = XLSX.utils.json_to_sheet([{ "Design Name / No.": "-", "Platform": "-", "Link": "" }]);
-    ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
-    XLSX.utils.book_append_sheet(wb, ws2, "Links");
-  }
+  // Sheet 2: Links
+  const ws2 = XLSX.utils.json_to_sheet(linkRows);
+  ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 60 }];
+  XLSX.utils.book_append_sheet(wb, ws2, "Links");
 
   const filename = category === 'all' ? "Completed_Designs.xlsx" : `Completed_Designs_${category.charAt(0).toUpperCase() + category.slice(1)}.xlsx`;
   XLSX.writeFile(wb, filename);
