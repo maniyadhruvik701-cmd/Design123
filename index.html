@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Design Management</title>
-  <link rel="stylesheet" href="style.css?v=2026-06-05_19">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -16,6 +15,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
   <!-- SheetJS for Excel export -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-exAwvW1Q.css">
 </head>
 <body>
 
@@ -80,23 +80,23 @@
           <i data-lucide="layout-dashboard" style="color: var(--accent-primary);"></i> Dashboard
         </h2>
         <div class="dashboard-stats-grid">
-          <div class="stat-card pending-stat-card" onclick="switchSection('pending')">
+          <div class="stat-card pending-stat-card" onclick="switchSection('pending', 'all')">
             <div class="stat-icon-wrapper pending-icon">
               <i data-lucide="clock"></i>
             </div>
             <div class="stat-info">
               <div class="stat-value" id="pendingCount">0</div>
-              <div class="stat-label">Pending Designs</div>
+              <div class="stat-label">Total Pending</div>
             </div>
           </div>
 
-          <div class="stat-card completed-stat-card" onclick="switchSection('completed')">
+          <div class="stat-card completed-stat-card" onclick="switchSection('completed', 'all')">
             <div class="stat-icon-wrapper completed-icon">
               <i data-lucide="check-circle"></i>
             </div>
             <div class="stat-info">
               <div class="stat-value" id="completedCount">0</div>
-              <div class="stat-label">Completed Designs</div>
+              <div class="stat-label">Total Completed</div>
             </div>
           </div>
 
@@ -120,6 +120,101 @@
             </div>
           </div>
         </div>
+
+        <!-- Portal, Vendor & Shop Breakdown Section on Dashboard -->
+        <div style="margin-top: 1.5rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 800; color: #1e293b; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i data-lucide="layers" style="color: var(--accent-primary); width: 20px; height: 20px;"></i> Platform Breakdown (Portal, Vendor & Shop)
+          </h3>
+          <div class="category-summary-grid">
+            <!-- Portal Box -->
+            <div class="category-summary-box portal-box">
+              <div class="category-summary-header">
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <div class="category-badge-icon portal-badge-icon">
+                    <i data-lucide="globe"></i>
+                  </div>
+                  <div>
+                    <h4 style="font-size: 1.1rem; font-weight: 800; color: #0284c7; margin: 0;">Portal Section</h4>
+                    <span style="font-size: 0.76rem; color: #64748b; font-weight: 500;">AJ-JIHU, AJ-TN, AJ-DE, MY-JIHU, MY-DE, etc.</span>
+                  </div>
+                </div>
+              </div>
+              <div class="category-stats-row">
+                <div class="cat-stat-card cat-stat-pending" onclick="switchSection('pending', 'portal')" title="Click to view Portal Pending">
+                  <div class="cat-stat-num" id="portalPendingCount">0</div>
+                  <div class="cat-stat-title">
+                    <i data-lucide="clock" style="width: 15px; height: 15px;"></i> Pending
+                  </div>
+                </div>
+                <div class="cat-stat-card cat-stat-completed" onclick="switchSection('completed', 'portal')" title="Click to view Portal Completed">
+                  <div class="cat-stat-num" id="portalCompletedCount">0</div>
+                  <div class="cat-stat-title">
+                    <i data-lucide="check-circle-2" style="width: 15px; height: 15px;"></i> Completed
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Vendor Box -->
+            <div class="category-summary-box vendor-box">
+              <div class="category-summary-header">
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <div class="category-badge-icon vendor-badge-icon">
+                    <i data-lucide="truck"></i>
+                  </div>
+                  <div>
+                    <h4 style="font-size: 1.1rem; font-weight: 800; color: #7c3aed; margin: 0;">Vendor Section</h4>
+                    <span style="font-size: 0.76rem; color: #64748b; font-weight: 500;">vender, b2b, website, bholo & others</span>
+                  </div>
+                </div>
+              </div>
+              <div class="category-stats-row">
+                <div class="cat-stat-card cat-stat-pending" onclick="switchSection('pending', 'vendor')" title="Click to view Vendor Pending">
+                  <div class="cat-stat-num" id="vendorPendingCount">0</div>
+                  <div class="cat-stat-title">
+                    <i data-lucide="clock" style="width: 15px; height: 15px;"></i> Pending
+                  </div>
+                </div>
+                <div class="cat-stat-card cat-stat-completed" onclick="switchSection('completed', 'vendor')" title="Click to view Vendor Completed">
+                  <div class="cat-stat-num" id="vendorCompletedCount">0</div>
+                  <div class="cat-stat-title">
+                    <i data-lucide="check-circle-2" style="width: 15px; height: 15px;"></i> Completed
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Shop Box -->
+            <div class="category-summary-box shop-box">
+              <div class="category-summary-header">
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <div class="category-badge-icon shop-badge-icon">
+                    <i data-lucide="store"></i>
+                  </div>
+                  <div>
+                    <h4 style="font-size: 1.1rem; font-weight: 800; color: #b45309; margin: 0;">Shop Section</h4>
+                    <span style="font-size: 0.76rem; color: #64748b; font-weight: 500;">RT, BB, MS, CT</span>
+                  </div>
+                </div>
+              </div>
+              <div class="category-stats-row">
+                <div class="cat-stat-card cat-stat-pending" onclick="switchSection('pending', 'shop')" title="Click to view Shop Pending">
+                  <div class="cat-stat-num" id="shopPendingCount">0</div>
+                  <div class="cat-stat-title">
+                    <i data-lucide="clock" style="width: 15px; height: 15px;"></i> Pending
+                  </div>
+                </div>
+                <div class="cat-stat-card cat-stat-completed" onclick="switchSection('completed', 'shop')" title="Click to view Shop Completed">
+                  <div class="cat-stat-num" id="shopCompletedCount">0</div>
+                  <div class="cat-stat-title">
+                    <i data-lucide="check-circle-2" style="width: 15px; height: 15px;"></i> Completed
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- PENDING SECTION -->
@@ -136,6 +231,30 @@
               <i data-lucide="download"></i> Export Excel
             </button>
           </div>
+        </div>
+
+        <!-- Portal vs Vendor vs Shop Section Filter Pills -->
+        <div class="category-toggle-container">
+          <button type="button" id="pendingFilterPortalBtn" class="category-toggle-btn btn-portal active" onclick="setPendingCategoryFilter('portal')">
+            <i data-lucide="globe" style="width: 16px; height: 16px;"></i>
+            <span>Portal</span>
+            <span class="category-count-badge" id="pendingPortalFilterBadge">0</span>
+          </button>
+          <button type="button" id="pendingFilterVendorBtn" class="category-toggle-btn btn-vendor" onclick="setPendingCategoryFilter('vendor')">
+            <i data-lucide="truck" style="width: 16px; height: 16px;"></i>
+            <span>Vendor</span>
+            <span class="category-count-badge" id="pendingVendorFilterBadge">0</span>
+          </button>
+          <button type="button" id="pendingFilterShopBtn" class="category-toggle-btn btn-shop" onclick="setPendingCategoryFilter('shop')">
+            <i data-lucide="store" style="width: 16px; height: 16px;"></i>
+            <span>Shop</span>
+            <span class="category-count-badge" id="pendingShopFilterBadge">0</span>
+          </button>
+          <button type="button" id="pendingFilterAllBtn" class="category-toggle-btn" onclick="setPendingCategoryFilter('all')">
+            <i data-lucide="layers" style="width: 16px; height: 16px;"></i>
+            <span>All</span>
+            <span class="category-count-badge" id="pendingAllFilterBadge">0</span>
+          </button>
         </div>
         
         <input type="text" id="searchPending" class="search-bar" placeholder="Search Designs...">
@@ -163,6 +282,30 @@
               <i data-lucide="download"></i> Export Excel
             </button>
           </div>
+        </div>
+
+        <!-- Portal vs Vendor vs Shop Section Filter Pills -->
+        <div class="category-toggle-container">
+          <button type="button" id="completedFilterPortalBtn" class="category-toggle-btn btn-portal active" onclick="setCompletedCategoryFilter('portal')">
+            <i data-lucide="globe" style="width: 16px; height: 16px;"></i>
+            <span>Portal</span>
+            <span class="category-count-badge" id="completedPortalFilterBadge">0</span>
+          </button>
+          <button type="button" id="completedFilterVendorBtn" class="category-toggle-btn btn-vendor" onclick="setCompletedCategoryFilter('vendor')">
+            <i data-lucide="truck" style="width: 16px; height: 16px;"></i>
+            <span>Vendor</span>
+            <span class="category-count-badge" id="completedVendorFilterBadge">0</span>
+          </button>
+          <button type="button" id="completedFilterShopBtn" class="category-toggle-btn btn-shop" onclick="setCompletedCategoryFilter('shop')">
+            <i data-lucide="store" style="width: 16px; height: 16px;"></i>
+            <span>Shop</span>
+            <span class="category-count-badge" id="completedShopFilterBadge">0</span>
+          </button>
+          <button type="button" id="completedFilterAllBtn" class="category-toggle-btn" onclick="setCompletedCategoryFilter('all')">
+            <i data-lucide="layers" style="width: 16px; height: 16px;"></i>
+            <span>All</span>
+            <span class="category-count-badge" id="completedAllFilterBadge">0</span>
+          </button>
         </div>
         
         <input type="text" id="searchCompleted" class="search-bar" placeholder="Search Completed Designs...">
@@ -213,9 +356,14 @@
         <h2 class="section-title">
           <i data-lucide="layers" style="color: var(--accent-primary);"></i> Manage Platforms
         </h2>
-        <div class="fancy-card" style="max-width: 600px;">
-          <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
-            <input type="text" id="newPlatformInput" class="material-input" placeholder="E.g., Flipkart" style="margin-bottom: 0; flex: 1;" onkeydown="if(event.key === 'Enter') addPlatform();">
+        <div class="fancy-card" style="max-width: 720px;">
+          <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;">
+            <input type="text" id="newPlatformInput" class="material-input" placeholder="Platform Name (e.g., AJ-TN, Flipkart)" style="margin-bottom: 0; flex: 2; min-width: 180px;" onkeydown="if(event.key === 'Enter') addPlatform();">
+            <select id="newPlatformCategory" class="material-input" style="margin-bottom: 0; flex: 1; min-width: 130px; background: white;">
+              <option value="portal">🏢 Portal</option>
+              <option value="vendor" selected>🚚 Vendor</option>
+              <option value="shop">🏪 Shop</option>
+            </select>
             <button type="button" class="btn btn-primary" onclick="addPlatform()" style="white-space: nowrap;">
               <i data-lucide="plus"></i> Add Platform
             </button>
@@ -230,12 +378,12 @@
             </button>
           </div>
           
-          <div id="platformsList" style="display: flex; flex-direction: column; gap: 0.5rem;">
-            <!-- Platform items will be injected here -->
+          <div id="platformsList">
+            <!-- Platform items will be injected here in 2 sections (Portal & Vendor) -->
           </div>
         </div>
 
-        <div class="fancy-card" style="max-width: 600px; margin-top: 2rem; border-color: #fca5a5;">
+        <div class="fancy-card" style="max-width: 720px; margin-top: 2rem; border-color: #fca5a5;">
           <h3 style="color: #ef4444; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
             <i data-lucide="alert-triangle" style="width: 20px; height: 20px;"></i> System Reset
           </h3>
@@ -573,6 +721,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=2026-09-13_01"></script>
+  <script src="script.js?v=2026-10-26_excel_fix2"></script>
 </body>
 </html>
