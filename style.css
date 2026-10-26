@@ -916,3 +916,380 @@ textarea.material-input {
   font-weight: 800;
   font-size: 0.85rem;
 }
+
+/* Excel Upload Drop Zone Styles */
+.excel-drop-zone {
+  border: 2px dashed #93c5fd;
+  background-color: #f0f9ff;
+  border-radius: 12px;
+  padding: 2.25rem 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+}
+
+.excel-drop-zone:hover, .excel-drop-zone.dragover {
+  border-color: var(--accent-primary);
+  background-color: #e0f2fe;
+  transform: translateY(-1px);
+}
+
+.excel-drop-icon {
+  margin-bottom: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: white;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(25, 118, 210, 0.12);
+}
+
+.badge-action-update {
+  background: #fef3c7;
+  color: #b45309;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  display: inline-block;
+}
+
+.badge-action-new {
+  background: #dcfce7;
+  color: #15803d;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  display: inline-block;
+}
+
+#excelPreviewTable th, #excelPreviewTable td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+#excelPreviewTable tr:hover td {
+  background: #f8fafc;
+}
+
+/* =========================================================
+   PORTAL & VENDOR SECTION STYLES
+   ========================================================= */
+
+/* Category Toggle Filter Pills (Pending & Completed) */
+.category-toggle-container {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.category-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.25rem;
+  border-radius: 9999px;
+  background: white;
+  border: 1.5px solid var(--border-color);
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.category-toggle-btn:hover {
+  border-color: #cbd5e1;
+  color: var(--text-main);
+  transform: translateY(-1px);
+}
+
+.category-toggle-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+  box-shadow: 0 4px 10px rgba(25, 118, 210, 0.25);
+}
+
+.category-toggle-btn.btn-portal.active {
+  background: #0284c7;
+  border-color: #0284c7;
+  box-shadow: 0 4px 10px rgba(2, 132, 199, 0.25);
+}
+
+.category-toggle-btn.btn-vendor.active {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  box-shadow: 0 4px 10px rgba(124, 58, 237, 0.25);
+}
+
+.category-toggle-btn.btn-shop.active {
+  background: #d97706;
+  border-color: #d97706;
+  box-shadow: 0 4px 10px rgba(217, 119, 6, 0.25);
+}
+
+.category-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  background: #f1f5f9;
+  color: #475569;
+  transition: all 0.2s;
+}
+
+.category-toggle-btn.active .category-count-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
+/* Dashboard Portal, Vendor & Shop Summary Cards */
+.category-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.category-summary-box {
+  background: white;
+  border-radius: 14px;
+  padding: 1.5rem;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.category-summary-box:hover {
+  box-shadow: 0 8px 16px -2px rgba(0, 0, 0, 0.08);
+}
+
+.category-summary-box.portal-box {
+  border-top: 4px solid #0284c7;
+  background: linear-gradient(180deg, rgba(240, 249, 255, 0.6) 0%, #ffffff 40%);
+}
+
+.category-summary-box.vendor-box {
+  border-top: 4px solid #7c3aed;
+  background: linear-gradient(180deg, rgba(245, 243, 255, 0.6) 0%, #ffffff 40%);
+}
+
+.category-summary-box.shop-box {
+  border-top: 4px solid #d97706;
+  background: linear-gradient(180deg, rgba(254, 243, 199, 0.6) 0%, #ffffff 40%);
+}
+
+.category-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.category-badge-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.portal-badge-icon {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.vendor-badge-icon {
+  background: #ede9fe;
+  color: #7c3aed;
+}
+
+.shop-badge-icon {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.category-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.cat-stat-card {
+  padding: 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.cat-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06);
+}
+
+.cat-stat-pending:hover {
+  border-color: #f59e0b;
+}
+
+.cat-stat-completed:hover {
+  border-color: #10b981;
+}
+
+.cat-stat-num {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #1e293b;
+  line-height: 1.1;
+  margin-bottom: 0.25rem;
+}
+
+.cat-stat-pending .cat-stat-num {
+  color: #d97706;
+}
+
+.cat-stat-completed .cat-stat-num {
+  color: #10b981;
+}
+
+.cat-stat-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Group Sub-headings in Grid View */
+.section-subgroup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: white;
+  border-radius: 8px;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border-color);
+}
+
+.section-subgroup-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.subgroup-portal-title {
+  color: #0369a1;
+}
+
+.subgroup-vendor-title {
+  color: #6d28d9;
+}
+
+.subgroup-shop-title {
+  color: #b45309;
+}
+
+/* Platform Manager Styles */
+.platforms-category-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 640px) {
+  .platforms-category-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+.platform-cat-box {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+}
+
+.platform-cat-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.platform-chip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 0.85rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 0.5rem;
+  transition: all 0.15s;
+}
+
+.platform-chip:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+/* Modal Group Headers */
+.modal-plat-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.modal-plat-portal-header {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.modal-plat-vendor-header {
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
+}
+
+.modal-plat-shop-header {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+
