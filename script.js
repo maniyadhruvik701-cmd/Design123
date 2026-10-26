@@ -1,6 +1,67 @@
 // Initialize state
 let designs = [];
-let platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
+
+// Portal platforms specified by user
+const PORTAL_PLATFORM_LIST = [
+  'AJ-JIHU',
+  'AJ-TN',
+  'AJ-DE',
+  'MY-JIHU',
+  'MY-DE',
+  'MY-HOP',
+  'MY-JIHU01',
+  'AMZ-JIKU',
+  'AMZ-JIHU',
+  'AMZ-KP-MY-PB',
+  'AMZ-KP',
+  'MY-PB',
+];
+
+// Shop platforms specified by user
+const SHOP_PLATFORM_LIST = [
+  'RT',
+  'BB',
+  'MS',
+  'CT',
+];
+
+let platformCategories = {};
+let deletedPlatforms = [];
+
+// Helper to determine if a platform is 'portal', 'shop', or 'vendor'
+function getPlatformCategory(platformName) {
+  if (!platformName) return 'vendor';
+  const clean = String(platformName).trim();
+  if (platformCategories && platformCategories[clean]) {
+    return platformCategories[clean];
+  }
+  const norm = clean.toUpperCase();
+
+  // Check shop platforms
+  if (norm === 'SHOP' || SHOP_PLATFORM_LIST.some(p => p.toUpperCase() === norm)) {
+    return 'shop';
+  }
+
+  // Check portal platforms
+  if (norm === 'PORTAL' || PORTAL_PLATFORM_LIST.some(p => p.toUpperCase() === norm)) {
+    return 'portal';
+  }
+  // Check common portal prefixes
+  if (norm.startsWith('AJ-') || norm.startsWith('MY-') || norm.startsWith('AMZ-')) {
+    return 'portal';
+  }
+
+  return 'vendor';
+}
+
+let platforms = [
+  // Portal Platforms
+  'AJ-JIHU', 'AJ-TN', 'AJ-DE', 'MY-JIHU', 'MY-DE', 'MY-HOP', 'MY-JIHU01', 'AMZ-JIKU', 'AMZ-KP-MY-PB',
+  // Shop Platforms
+  'RT', 'BB', 'MS', 'CT',
+  // Vendor Platforms
+  'vender', 'b2b', 'website', 'bholo'
+];
 
 function sanitizeDesignPlatforms(design) {
   if (!design) return [];
@@ -26,8 +87,8 @@ function sanitizeDesignPlatforms(design) {
 
 function sanitizeDesigns(rawDesigns) {
   if (!rawDesigns) return [];
-  const list = Array.isArray(rawDesigns) 
-    ? rawDesigns 
+  const list = Array.isArray(rawDesigns)
+    ? rawDesigns
     : Object.keys(rawDesigns).map(k => rawDesigns[k]);
 
   return list.map(d => {
@@ -40,10 +101,10 @@ function sanitizeDesigns(rawDesigns) {
 const DEFAULT_USERS = [
   { username: 'vishal', pin: '2179', role: 'admin', permissions: { tabs: ['dashboard', 'add', 'pending', 'completed', 'stockin', 'stockout', 'platforms', 'users'], platforms: [] } },
   { username: 'piyush', pin: '2179', role: 'admin', permissions: { tabs: ['dashboard', 'add', 'pending', 'completed', 'stockin', 'stockout', 'platforms', 'users'], platforms: [] } },
-  { username: 'portal', pin: '5674', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['portal'] } },
-  { username: 'vender', pin: '1475', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['vender'] } },
+  { username: 'portal', pin: '5674', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['portal', ...PORTAL_PLATFORM_LIST] } },
+  { username: 'vender', pin: '1475', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['vender', 'b2b', 'website', 'bholo'] } },
   { username: 'b2b', pin: '1268', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['b2b'] } },
-  { username: 'shop', pin: '4142', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['shop'] } },
+  { username: 'shop', pin: '4142', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['RT', 'BB', 'MS', 'CT', 'shop'] } },
   { username: 'website', pin: '6598', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['website'] } },
   { username: 'bholo', pin: '1734', role: 'platform', permissions: { tabs: ['dashboard', 'pending', 'completed', 'stockin', 'stockout'], platforms: ['bholo'] } }
 ];
@@ -127,25 +188,55 @@ function setupFirebaseListeners() {
   if (areListenersSetup) return;
   areListenersSetup = true;
 
-  // DESIGNS & PLATFORMS: Load ONCE together safely to prevent race condition.
+  // DESIGNS, PLATFORMS & DELETED: Load ONCE together safely to prevent race condition.
   Promise.all([
     fbDb.ref('platformsData').once('value'),
-    fbDb.ref('designs').once('value')
-  ]).then(([platformsSnap, designsSnap]) => {
+    fbDb.ref('designs').once('value'),
+    fbDb.ref('deletedPlatforms').once('value')
+  ]).then(([platformsSnap, designsSnap, deletedSnap]) => {
+    // 1. Process deletedPlatforms first
+    const remoteDeleted = deletedSnap ? deletedSnap.val() : null;
+    if (remoteDeleted && Array.isArray(remoteDeleted)) {
+      remoteDeleted.forEach(dp => {
+        if (!deletedPlatforms.some(x => x.toLowerCase() === String(dp).toLowerCase())) {
+          deletedPlatforms.push(dp);
+        }
+      });
+    }
+    localforage.setItem('designStudioDeletedPlatforms', deletedPlatforms);
+
+    // 2. Process platforms
     const platData = platformsSnap.val();
     if (platData && platData.list && Array.isArray(platData.list) && platData.list.length > 0) {
       platforms = platData.list;
-      localforage.setItem('designStudioPlatforms', platforms);
-    } else {
-      if (platforms && platforms.length > 0) {
-        fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms init write failed:", err));
-      } else {
-        platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
-        localforage.setItem('designStudioPlatforms', platforms);
-        fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms default write failed:", err));
+      if (platData.categories) {
+        platformCategories = platData.categories;
       }
     }
 
+    // Never keep deleted platforms
+    platforms = platforms.filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
+
+    // Guarantee default portal platforms exist in platforms array ONLY IF NOT DELETED
+    PORTAL_PLATFORM_LIST.forEach(p => {
+      const isDeleted = deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase());
+      if (!isDeleted && !platforms.some(pl => pl.toUpperCase() === p.toUpperCase())) {
+        platforms.push(p);
+      }
+    });
+
+    // Guarantee default shop platforms exist in platforms array ONLY IF NOT DELETED
+    SHOP_PLATFORM_LIST.forEach(p => {
+      const isDeleted = deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase());
+      if (!isDeleted && !platforms.some(pl => pl.toUpperCase() === p.toUpperCase())) {
+        platforms.push(p);
+      }
+    });
+
+    localforage.setItem('designStudioPlatforms', platforms);
+    localforage.setItem('designStudioPlatformCategories', platformCategories);
+
+    // 3. Process designs
     const data = designsSnap.val();
     if (data) {
       const rawList = Object.keys(data).map(key => {
@@ -154,6 +245,12 @@ function setupFirebaseListeners() {
         return item;
       });
       designs = sanitizeDesigns(rawList);
+      // Clean deleted platforms from loaded designs
+      designs.forEach(d => {
+        if (d.platforms && Array.isArray(d.platforms)) {
+          d.platforms = d.platforms.filter(p => p && p.name && !deletedPlatforms.some(dp => dp.toLowerCase() === p.name.toLowerCase()));
+        }
+      });
       localforage.setItem('designStudioData', designs);
     } else {
       if (designs && designs.length > 0) {
@@ -196,7 +293,7 @@ function setupFirebaseListeners() {
       }
     }
     renderUsersManager();
-    
+
     if (currentUser) {
       const updatedUser = appUsers.find(u => u.username === currentUser.username);
       if (updatedUser) {
@@ -238,12 +335,48 @@ const stockStatusModal = document.getElementById('stockStatusModal');
 
 let currentPhotoBase64 = '';
 
+// Category Filter State for Pending and Completed sections ('portal', 'vendor', 'all')
+let pendingActiveCategory = 'portal';
+let completedActiveCategory = 'portal';
+
+window.setPendingCategoryFilter = function (cat) {
+  pendingActiveCategory = cat;
+
+  const portalBtn = document.getElementById('pendingFilterPortalBtn');
+  const vendorBtn = document.getElementById('pendingFilterVendorBtn');
+  const shopBtn = document.getElementById('pendingFilterShopBtn');
+  const allBtn = document.getElementById('pendingFilterAllBtn');
+
+  if (portalBtn) portalBtn.classList.toggle('active', cat === 'portal');
+  if (vendorBtn) vendorBtn.classList.toggle('active', cat === 'vendor');
+  if (shopBtn) shopBtn.classList.toggle('active', cat === 'shop');
+  if (allBtn) allBtn.classList.toggle('active', cat === 'all');
+
+  renderGrids();
+};
+
+window.setCompletedCategoryFilter = function (cat) {
+  completedActiveCategory = cat;
+
+  const portalBtn = document.getElementById('completedFilterPortalBtn');
+  const vendorBtn = document.getElementById('completedFilterVendorBtn');
+  const shopBtn = document.getElementById('completedFilterShopBtn');
+  const allBtn = document.getElementById('completedFilterAllBtn');
+
+  if (portalBtn) portalBtn.classList.toggle('active', cat === 'portal');
+  if (vendorBtn) vendorBtn.classList.toggle('active', cat === 'vendor');
+  if (shopBtn) shopBtn.classList.toggle('active', cat === 'shop');
+  if (allBtn) allBtn.classList.toggle('active', cat === 'all');
+
+  renderGrids();
+};
+
 // User Session and Login logic
-window.handleLoginSubmit = function() {
+window.handleLoginSubmit = function () {
   const username = document.getElementById('loginUserSelect').value;
   const pin = document.getElementById('loginPinInput').value;
   const errorMsg = document.getElementById('loginErrorMessage');
-  
+
   if (!username) {
     errorMsg.innerText = "Please select an account first!";
     errorMsg.style.display = 'block';
@@ -268,7 +401,7 @@ window.handleLoginSubmit = function() {
   }
 }
 
-window.handleLogout = function() {
+window.handleLogout = function () {
   currentUser = null;
   applyUserSession();
 }
@@ -284,16 +417,16 @@ function applyUserSession() {
     document.getElementById('loginPinInput').value = '';
     return;
   }
-  
+
   // Hide login screen
   loginScreen.style.display = 'none';
-  
+
   // Update Profile Name in Header
   const userDisplay = document.querySelector('.user-profile span');
   if (userDisplay) {
     userDisplay.innerText = currentUser.username;
   }
-  
+
   // Set up sidebar links display based on access
   const sidebarNav = document.querySelector('.sidebar-nav');
   if (sidebarNav && currentUser.permissions && currentUser.permissions.tabs) {
@@ -356,7 +489,7 @@ function applyUserSession() {
         </a>
       `;
     }
-    
+
     sidebarNav.innerHTML = sidebarHtml;
     lucide.createIcons();
   }
@@ -367,7 +500,7 @@ function applyUserSession() {
   } else {
     switchSection('dashboard');
   }
-  
+
   // Re-render select options & grids
   renderPlatformSelect();
   renderPlatformManager();
@@ -405,8 +538,8 @@ function renderUsersManager() {
     }).join('');
 
     const assignedPlatforms = user.permissions && user.permissions.platforms ? user.permissions.platforms : [];
-    
-    const platformsHtml = assignedPlatforms.length === 0 
+
+    const platformsHtml = assignedPlatforms.length === 0
       ? `<span style="color: var(--text-muted); font-size: 0.85rem; font-style: italic;">No platforms assigned.</span>`
       : assignedPlatforms.map(p => `
           <span style="display: inline-block; background: #e0f2fe; color: #0284c7; padding: 0.3rem 0.75rem; border-radius: 9999px; font-weight: 700; font-size: 0.8rem; text-transform: uppercase; border: 1px solid #bae6fd;">
@@ -460,7 +593,7 @@ function saveUsersDb() {
   }
 }
 
-window.saveUserPermissions = function(username) {
+window.saveUserPermissions = function (username) {
   const userIndex = appUsers.findIndex(u => u.username === username);
   if (userIndex === -1) return;
 
@@ -482,23 +615,32 @@ window.saveUserPermissions = function(username) {
 
   // Save to DB in background
   saveUsersDb();
-  
+
   alert(`Permissions for user "${username}" saved successfully!`);
 }
 
 // Helper for displaying prices
-function getPriceDisplay(design) {
+function getPriceDisplay(design, category = 'all') {
   if (!design.platforms || design.platforms.length === 0) return '₹0';
-  
-  const prices = design.platforms.map(p => parseFloat(p.price) || 0).filter(p => p > 0);
+
+  let relevantPlats = design.platforms;
+  if (category === 'portal') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'portal');
+  } else if (category === 'vendor') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'vendor');
+  } else if (category === 'shop') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'shop');
+  }
+
+  const prices = relevantPlats.map(p => parseFloat(p.price) || 0).filter(p => p > 0);
   if (prices.length === 0) {
     // Fallback to legacy global price if it exists
     return design.price ? `₹${design.price}` : '₹0';
   }
-  
+
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
-  
+
   if (minPrice === maxPrice) {
     return `₹${minPrice}`;
   } else {
@@ -507,7 +649,7 @@ function getPriceDisplay(design) {
 }
 
 // Modal Logic
-window.openAddModal = function() {
+window.openAddModal = function () {
   document.getElementById('editDesignId').value = '';
   document.getElementById('modalTitle').innerText = 'Add New Design';
   document.getElementById('platformCheckboxesGroup').style.display = 'block';
@@ -518,11 +660,11 @@ window.openAddModal = function() {
   imagePreview.style.display = 'none';
   emptyPreviewIcon.style.display = 'flex';
   document.querySelectorAll('.material-input').forEach(input => {
-    if(input.tagName !== 'SELECT' && input.nextElementSibling) {
+    if (input.tagName !== 'SELECT' && input.nextElementSibling) {
       input.nextElementSibling.classList.remove('active');
     }
   });
-  
+
   // Disable all platform price inputs initially
   document.querySelectorAll('.platform-price-input').forEach(input => {
     input.disabled = true;
@@ -532,22 +674,28 @@ window.openAddModal = function() {
   addDesignModal.classList.add('active');
 }
 
-window.closeAddModal = function() {
+window.closeAddModal = function () {
   addDesignModal.classList.remove('active');
 }
 
 // Tab Switching Logic
-window.switchSection = function(sectionId) {
+window.switchSection = function (sectionId, categoryFilter) {
   if (sectionId === 'add') {
     openAddModal();
     return;
+  }
+
+  if (sectionId === 'pending' && categoryFilter) {
+    setPendingCategoryFilter(categoryFilter);
+  } else if (sectionId === 'completed' && categoryFilter) {
+    setCompletedCategoryFilter(categoryFilter);
   }
 
   // Hide all sections
   document.querySelectorAll('.section-content').forEach(el => {
     el.style.display = 'none';
   });
-  
+
   // Remove active class from all sidebar links
   document.querySelectorAll('.sidebar-link').forEach(btn => {
     btn.classList.remove('active');
@@ -560,8 +708,8 @@ window.switchSection = function(sectionId) {
   }
 
   // Set active link
-  const activeBtn = Array.from(document.querySelectorAll('.sidebar-link')).find(btn => 
-    btn.getAttribute('onclick').includes(`'${sectionId}'`)
+  const activeBtn = Array.from(document.querySelectorAll('.sidebar-link')).find(btn =>
+    btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(`'${sectionId}'`)
   );
   if (activeBtn) {
     activeBtn.classList.add('active');
@@ -576,9 +724,9 @@ photoInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (file) {
     const reader = new FileReader();
-    reader.onload = function(event) {
+    reader.onload = function (event) {
       const img = new Image();
-      img.onload = function() {
+      img.onload = function () {
         const canvas = document.createElement('canvas');
         const MAX_WIDTH = 800;
         const MAX_HEIGHT = 800;
@@ -600,7 +748,7 @@ photoInput.addEventListener('change', (e) => {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        
+
         // Compress to JPEG with 70% quality
         currentPhotoBase64 = canvas.toDataURL('image/jpeg', 0.7);
         imagePreview.src = currentPhotoBase64;
@@ -632,7 +780,7 @@ document.querySelectorAll('.material-input').forEach(input => {
   });
 });
 
-window.togglePlatformPriceInput = function(platformName, isChecked) {
+window.togglePlatformPriceInput = function (platformName, isChecked) {
   const input = document.getElementById(`price_input_${platformName}`);
   if (input) {
     input.disabled = !isChecked;
@@ -640,7 +788,7 @@ window.togglePlatformPriceInput = function(platformName, isChecked) {
   }
 }
 
-window.toggleAllPlatforms = function(isChecked) {
+window.toggleAllPlatforms = function (isChecked) {
   const checkboxes = document.querySelectorAll('.platform-checkbox');
   checkboxes.forEach(cb => {
     if (cb.checked !== isChecked) {
@@ -653,7 +801,7 @@ window.toggleAllPlatforms = function(isChecked) {
 // Form Submission
 addDesignForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  
+
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const originalBtnHtml = submitBtn.innerHTML;
   submitBtn.disabled = true;
@@ -682,10 +830,10 @@ addDesignForm.addEventListener('submit', async (e) => {
       }
       return;
     }
-    
+
     // Create multiple designs if multiple platforms are selected
     const checkedCheckboxes = Array.from(document.querySelectorAll('.platform-checkbox:checked'));
-    
+
     if (checkedCheckboxes.length === 0) {
       alert("Please select at least one platform.");
       return;
@@ -721,27 +869,27 @@ addDesignForm.addEventListener('submit', async (e) => {
       description: document.getElementById('description').value,
       platforms: platformsArray
     };
-    
+
     designs.push(newDesign);
     await saveData();
     renderGrids();
-    
+
     // Reset Form
     addDesignForm.reset();
     currentPhotoBase64 = '';
-    
+
     // Reset active classes on labels
     document.querySelectorAll('.material-input').forEach(input => {
-      if(input.tagName !== 'SELECT' && input.nextElementSibling) {
+      if (input.tagName !== 'SELECT' && input.nextElementSibling) {
         input.nextElementSibling.classList.remove('active');
       }
     });
-  
+
     // Reset Preview
     imagePreview.src = '';
     imagePreview.style.display = 'none';
     emptyPreviewIcon.style.display = 'flex';
-    
+
     // Close the Modal
     closeAddModal();
   } catch (error) {
@@ -759,21 +907,24 @@ clearDataBtn.addEventListener('click', async () => {
     designs = [];
     platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
     appUsers = JSON.parse(JSON.stringify(DEFAULT_USERS));
-    
+
+    deletedPlatforms = [];
     await localforage.setItem('designStudioData', designs);
     await localforage.setItem('designStudioPlatforms', platforms);
     await localforage.setItem('designStudioUsers', appUsers);
-    
+    await localforage.setItem('designStudioDeletedPlatforms', deletedPlatforms);
+
     if (isFirebaseConnected) {
       try {
         await fbDb.ref('designs').remove();
         await fbDb.ref('platformsData').set({ list: platforms });
         await fbDb.ref('appUsers').set(appUsers);
+        await fbDb.ref('deletedPlatforms').remove();
       } catch (err) {
         console.error("Firebase reset failed:", err);
       }
     }
-    
+
     alert("System has been reset to default values. The page will now reload.");
     location.reload();
   }
@@ -789,10 +940,13 @@ if (searchStockIn) searchStockIn.addEventListener('input', renderGrids);
 function saveData() {
   localforage.setItem('designStudioData', designs).catch(err => console.error("LocalForage saveData error:", err));
   localforage.setItem('designStudioPlatforms', platforms).catch(err => console.error("LocalForage platforms error:", err));
+  localforage.setItem('designStudioPlatformCategories', platformCategories).catch(err => console.error("LocalForage categories error:", err));
+  localforage.setItem('designStudioDeletedPlatforms', deletedPlatforms).catch(err => console.error("LocalForage deleted error:", err));
   
   if (isFirebaseConnected) {
-    // Store platforms as a wrapped object to avoid Firebase array re-indexing on delete
-    fbDb.ref('platformsData').set({ list: platforms }).catch(err => console.error("Firebase platforms sync failed:", err));
+    // Store platforms as a wrapped object with categories to preserve Portal vs Vendor classification
+    fbDb.ref('platformsData').set({ list: platforms, categories: platformCategories }).catch(err => console.error("Firebase platforms sync failed:", err));
+    fbDb.ref('deletedPlatforms').set(deletedPlatforms).catch(err => console.error("Firebase deletedPlatforms sync failed:", err));
     const dbObject = {};
     designs.forEach(d => {
       dbObject[d.id] = d;
@@ -802,8 +956,9 @@ function saveData() {
 }
 
 // Platform Management - Instant Optimistic UI Update
-window.addPlatform = function() {
+window.addPlatform = function () {
   const input = document.getElementById('newPlatformInput');
+  const catSelect = document.getElementById('newPlatformCategory');
   const addToAllCb = document.getElementById('addToAllDesignsCheckbox');
   if (!input) return;
   const val = input.value.trim();
@@ -811,13 +966,23 @@ window.addPlatform = function() {
     alert("Please enter a platform name!");
     return;
   }
-  if (platforms.includes(val)) {
+  if (platforms.some(p => p.toLowerCase() === val.toLowerCase())) {
     alert(`Platform "${val}" is already added!`);
     return;
   }
 
+  // If this platform was previously deleted, remove it from deleted list so it is restored
+  deletedPlatforms = deletedPlatforms.filter(dp => dp.toLowerCase() !== val.toLowerCase());
+  localforage.setItem('designStudioDeletedPlatforms', deletedPlatforms);
+  if (isFirebaseConnected) {
+    fbDb.ref('deletedPlatforms').set(deletedPlatforms).catch(e => console.error("Firebase deletedPlatforms set error:", e));
+  }
+
+  const selectedCategory = catSelect ? catSelect.value : getPlatformCategory(val);
+  platformCategories[val] = selectedCategory;
+
   platforms.push(val);
-  
+
   // Automatically add this platform to all existing designs as Pending
   const shouldAddToAll = !addToAllCb || addToAllCb.checked;
   if (shouldAddToAll) {
@@ -850,7 +1015,7 @@ window.addPlatform = function() {
   saveData();
 }
 
-window.syncAllPlatformsToAllDesigns = function() {
+window.syncAllPlatformsToAllDesigns = function () {
   let addedCount = 0;
   platforms.forEach(plat => {
     designs.forEach(d => {
@@ -876,81 +1041,250 @@ window.syncAllPlatformsToAllDesigns = function() {
   }
 }
 
-window.deletePlatform = function(platformName) {
+window.deletePlatform = async function (platformName) {
+  if (!platformName) return;
   if (confirm(`Are you sure you want to delete "${platformName}"?`)) {
-    // 1. Filter out from global platforms array
-    platforms = platforms.filter(p => p.toLowerCase() !== platformName.toLowerCase());
-    
-    // 2. Remove platform from all designs
-    designs.forEach(d => {
-      if (d.platforms && Array.isArray(d.platforms)) {
-        d.platforms = d.platforms.filter(p => p && p.name && p.name.toLowerCase() !== platformName.toLowerCase());
-      }
-    });
-    
-    // 3. Clean up from user permissions
-    appUsers.forEach(u => {
-      if (u.permissions && u.permissions.platforms) {
-        u.permissions.platforms = u.permissions.platforms.filter(p => p.toLowerCase() !== platformName.toLowerCase());
+    const targetName = String(platformName).trim();
+    const lowerName = targetName.toLowerCase();
+
+    // 1. Permanently register in deletedPlatforms to prevent resurrection
+    if (!deletedPlatforms.some(dp => dp.toLowerCase() === lowerName)) {
+      deletedPlatforms.push(targetName);
+    }
+
+    // 2. Filter out from global platforms array
+    platforms = platforms.filter(p => p.toLowerCase() !== lowerName);
+
+    // 3. Remove from platformCategories
+    Object.keys(platformCategories).forEach(catKey => {
+      if (catKey.toLowerCase() === lowerName) {
+        delete platformCategories[catKey];
       }
     });
 
-    // 4. Update UI INSTANTLY
+    // 4. Remove platform from all designs
+    designs.forEach(d => {
+      if (d.platforms && Array.isArray(d.platforms)) {
+        d.platforms = d.platforms.filter(p => p && p.name && p.name.toLowerCase() !== lowerName);
+      }
+    });
+
+    // 5. Clean up from user permissions
+    appUsers.forEach(u => {
+      if (u.permissions && u.permissions.platforms) {
+        u.permissions.platforms = u.permissions.platforms.filter(p => p.toLowerCase() !== lowerName);
+      }
+    });
+
+    // 6. Update UI INSTANTLY
     renderGrids();
     renderPlatformManager();
     renderPlatformSelect();
     renderUsersManager();
 
-    // 5. Save in background
-    saveUsersDb();
-    saveData();
+    // 7. Save locally to localforage
+    await localforage.setItem('designStudioDeletedPlatforms', deletedPlatforms);
+    await localforage.setItem('designStudioPlatforms', platforms);
+    await localforage.setItem('designStudioPlatformCategories', platformCategories);
+    await localforage.setItem('designStudioData', designs);
+    await localforage.setItem('designStudioUsers', appUsers);
+
+    // 8. Save to Firebase immediately
+    if (isFirebaseConnected) {
+      try {
+        await fbDb.ref('deletedPlatforms').set(deletedPlatforms);
+        await fbDb.ref('platformsData').set({ list: platforms, categories: platformCategories });
+        
+        const dbObject = {};
+        designs.forEach(d => {
+          dbObject[d.id] = d;
+        });
+        await fbDb.ref('designs').set(dbObject);
+        await fbDb.ref('appUsers').set(appUsers);
+      } catch (err) {
+        console.error("Firebase platform delete sync failed:", err);
+      }
+    }
   }
 }
 
 function renderPlatformManager() {
   const list = document.getElementById('platformsList');
   if (!list) return;
-  
-  list.innerHTML = platforms.map(p => `
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-color);">
-      <span style="font-weight: 600;">${p}</span>
-      <button class="btn-logout" style="padding: 0.25rem 0.5rem; border-radius: 4px;" onclick="deletePlatform('${p}')">
+
+  const portalPlats = platforms.filter(p => getPlatformCategory(p) === 'portal');
+  const vendorPlats = platforms.filter(p => getPlatformCategory(p) === 'vendor');
+  const shopPlats = platforms.filter(p => getPlatformCategory(p) === 'shop');
+
+  const renderChip = (p, catBadgeClass, catIcon) => {
+    let iconColor = '#7c3aed';
+    if (catBadgeClass === 'portal') iconColor = '#0284c7';
+    else if (catBadgeClass === 'shop') iconColor = '#d97706';
+
+    return `
+    <div class="platform-chip">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <i data-lucide="${catIcon}" style="width: 15px; height: 15px; color: ${iconColor};"></i>
+        <span style="font-weight: 700; font-size: 0.95rem; color: #1e293b;">${p}</span>
+      </div>
+      <button class="btn-logout" style="padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid #fecaca; background: #fee2e2; color: #ef4444; cursor: pointer;" onclick="deletePlatform('${p}')" title="Delete platform">
         <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
       </button>
     </div>
-  `).join('');
+  `;
+  };
+
+  list.innerHTML = `
+    <div class="platforms-category-container">
+      <!-- Portal Platforms Box -->
+      <div class="platform-cat-box" style="border-top: 3px solid #0284c7;">
+        <div class="platform-cat-title" style="color: #0369a1;">
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <i data-lucide="globe" style="width: 16px; height: 16px;"></i>
+            <span>Portal Platforms</span>
+          </div>
+          <span class="category-count-badge" style="background: #e0f2fe; color: #0369a1;">${portalPlats.length}</span>
+        </div>
+        <div style="font-size: 0.78rem; color: #64748b; margin-bottom: 0.75rem;">
+          Official portal platforms (AJ-JIHU, AJ-TN, AJ-DE, MY-JIHU, MY-DE, etc.)
+        </div>
+        <div>
+          ${portalPlats.length === 0 ? `<div style="color: #94a3b8; font-size: 0.85rem; padding: 0.5rem 0;">No portal platforms added.</div>` : portalPlats.map(p => renderChip(p, 'portal', 'globe')).join('')}
+        </div>
+      </div>
+
+      <!-- Vendor Platforms Box -->
+      <div class="platform-cat-box" style="border-top: 3px solid #7c3aed;">
+        <div class="platform-cat-title" style="color: #6d28d9;">
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <i data-lucide="truck" style="width: 16px; height: 16px;"></i>
+            <span>Vendor Platforms</span>
+          </div>
+          <span class="category-count-badge" style="background: #ede9fe; color: #6d28d9;">${vendorPlats.length}</span>
+        </div>
+        <div style="font-size: 0.78rem; color: #64748b; margin-bottom: 0.75rem;">
+          External vendors & partner platforms (vender, b2b, website, bholo)
+        </div>
+        <div>
+          ${vendorPlats.length === 0 ? `<div style="color: #94a3b8; font-size: 0.85rem; padding: 0.5rem 0;">No vendor platforms added.</div>` : vendorPlats.map(p => renderChip(p, 'vendor', 'truck')).join('')}
+        </div>
+      </div>
+
+      <!-- Shop Platforms Box -->
+      <div class="platform-cat-box" style="border-top: 3px solid #d97706;">
+        <div class="platform-cat-title" style="color: #b45309;">
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <i data-lucide="store" style="width: 16px; height: 16px;"></i>
+            <span>Shop Platforms</span>
+          </div>
+          <span class="category-count-badge" style="background: #fef3c7; color: #b45309;">${shopPlats.length}</span>
+        </div>
+        <div style="font-size: 0.78rem; color: #64748b; margin-bottom: 0.75rem;">
+          Shop outlet platforms (RT, BB, MS, CT)
+        </div>
+        <div>
+          ${shopPlats.length === 0 ? `<div style="color: #94a3b8; font-size: 0.85rem; padding: 0.5rem 0;">No shop platforms added.</div>` : shopPlats.map(p => renderChip(p, 'shop', 'store')).join('')}
+        </div>
+      </div>
+    </div>
+  `;
 
   lucide.createIcons();
 }
 
+window.toggleCategoryPlatforms = function (category, isChecked) {
+  const checkboxes = document.querySelectorAll(`.platform-cb-${category}`);
+  checkboxes.forEach(cb => {
+    if (cb.checked !== isChecked) {
+      cb.checked = isChecked;
+      togglePlatformPriceInput(cb.value, isChecked);
+    }
+  });
+};
+
 function renderPlatformSelect() {
   const container = document.getElementById('platformCheckboxes');
-  if (container) {
-    let selectAllHtml = `
-      <div style="width: 100%; display: flex; align-items: center; gap: 1rem; background: #e2e8f0; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 0.5rem;">
-        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; width: 100%;">
-          <input type="checkbox" id="selectAllPlatforms" onchange="toggleAllPlatforms(this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent-primary);">
-          <span style="font-weight: 800; color: #1e293b;">Select All Platforms</span>
-        </label>
-      </div>
-    `;
+  if (!container) return;
 
-    container.innerHTML = selectAllHtml + platforms.map(p => `
-      <div style="display: flex; align-items: center; gap: 1rem; width: 100%; background: #f8fafc; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border-color);">
-        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; min-width: 120px;">
-          <input type="checkbox" class="platform-checkbox" value="${p}" onchange="togglePlatformPriceInput('${p}', this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent-primary);">
-          <span style="font-weight: 600;">${p}</span>
-        </label>
-        <div style="flex: 1;">
-          <input type="number" id="price_input_${p}" class="material-input platform-price-input" placeholder="Price (₹)" value="1" disabled style="margin-bottom: 0; padding: 0.5rem; font-size: 0.9rem; background: white;">
-        </div>
+  const portalPlats = platforms.filter(p => getPlatformCategory(p) === 'portal');
+  const vendorPlats = platforms.filter(p => getPlatformCategory(p) === 'vendor');
+  const shopPlats = platforms.filter(p => getPlatformCategory(p) === 'shop');
+
+  const renderRow = (p, catColor, catClass) => `
+    <div style="display: flex; align-items: center; gap: 0.75rem; width: 100%; background: #ffffff; padding: 0.45rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color); margin-bottom: 0.35rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; min-width: 130px;">
+        <input type="checkbox" class="platform-checkbox platform-cb-${catClass}" value="${p}" onchange="togglePlatformPriceInput('${p}', this.checked)" style="width: 16px; height: 16px; accent-color: ${catColor};">
+        <span style="font-weight: 700; font-size: 0.88rem; color: #1e293b;">${p}</span>
+      </label>
+      <div style="flex: 1;">
+        <input type="number" id="price_input_${p}" class="material-input platform-price-input" placeholder="Price (₹)" value="1" disabled style="margin-bottom: 0; padding: 0.4rem 0.6rem; font-size: 0.85rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">
       </div>
-    `).join('');
-  }
+    </div>
+  `;
+
+  container.innerHTML = `
+    <!-- Global Select All -->
+    <div style="width: 100%; display: flex; align-items: center; justify-content: space-between; background: #f1f5f9; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 0.75rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+        <input type="checkbox" id="selectAllPlatforms" onchange="toggleAllPlatforms(this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent-primary);">
+        <span style="font-weight: 800; color: #1e293b; font-size: 0.9rem;">Select All (All Platforms)</span>
+      </label>
+    </div>
+
+    <!-- Portal Section -->
+    <div style="margin-bottom: 1rem; border: 1px solid #bae6fd; border-radius: 8px; padding: 0.75rem; background: #f0f9ff;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid #bae6fd;">
+        <div style="font-weight: 800; color: #0369a1; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem;">
+          <i data-lucide="globe" style="width: 16px; height: 16px;"></i> Portal Platforms (${portalPlats.length})
+        </div>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.8rem; font-weight: 700; color: #0284c7;">
+          <input type="checkbox" id="selectAllPortalCb" onchange="toggleCategoryPlatforms('portal', this.checked)" style="accent-color: #0284c7;">
+          Select All Portal
+        </label>
+      </div>
+      <div>
+        ${portalPlats.length === 0 ? `<div style="font-size: 0.8rem; color: #64748b;">No portal platforms defined.</div>` : portalPlats.map(p => renderRow(p, '#0284c7', 'portal')).join('')}
+      </div>
+    </div>
+
+    <!-- Shop Section -->
+    <div style="margin-bottom: 1rem; border: 1px solid #fde68a; border-radius: 8px; padding: 0.75rem; background: #fffbeb;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid #fde68a;">
+        <div style="font-weight: 800; color: #b45309; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem;">
+          <i data-lucide="store" style="width: 16px; height: 16px;"></i> Shop Platforms (${shopPlats.length})
+        </div>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.8rem; font-weight: 700; color: #d97706;">
+          <input type="checkbox" id="selectAllShopCb" onchange="toggleCategoryPlatforms('shop', this.checked)" style="accent-color: #d97706;">
+          Select All Shop
+        </label>
+      </div>
+      <div>
+        ${shopPlats.length === 0 ? `<div style="font-size: 0.8rem; color: #64748b;">No shop platforms defined.</div>` : shopPlats.map(p => renderRow(p, '#d97706', 'shop')).join('')}
+      </div>
+    </div>
+
+    <!-- Vendor Section -->
+    <div style="margin-bottom: 0.5rem; border: 1px solid #ddd6fe; border-radius: 8px; padding: 0.75rem; background: #faf5ff;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid #ddd6fe;">
+        <div style="font-weight: 800; color: #6d28d9; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem;">
+          <i data-lucide="truck" style="width: 16px; height: 16px;"></i> Vendor Platforms (${vendorPlats.length})
+        </div>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.8rem; font-weight: 700; color: #7c3aed;">
+          <input type="checkbox" id="selectAllVendorCb" onchange="toggleCategoryPlatforms('vendor', this.checked)" style="accent-color: #7c3aed;">
+          Select All Vendor
+        </label>
+      </div>
+      <div>
+        ${vendorPlats.length === 0 ? `<div style="font-size: 0.8rem; color: #64748b;">No vendor platforms defined.</div>` : vendorPlats.map(p => renderRow(p, '#7c3aed', 'vendor')).join('')}
+      </div>
+    </div>
+  `;
+
+  lucide.createIcons();
 }
 
 // Edit and Delete functions
-window.editDesignItem = function(id) {
+window.editDesignItem = function (id) {
   if (currentUser && currentUser.role === 'platform') return;
   const design = designs.find(d => String(d.id) === String(id));
   if (!design) return;
@@ -958,10 +1292,10 @@ window.editDesignItem = function(id) {
   document.getElementById('editDesignId').value = design.id;
   document.getElementById('modalTitle').innerText = 'Edit Design';
   document.getElementById('platformCheckboxesGroup').style.display = 'none';
-  
+
   document.getElementById('sku').value = design.sku;
   document.getElementById('description').value = design.description;
-  
+
   // Make photo optional during edit
   document.getElementById('photo').required = false;
 
@@ -974,7 +1308,7 @@ window.editDesignItem = function(id) {
 
   // Set active classes
   document.querySelectorAll('.material-input').forEach(input => {
-    if(input.value && input.nextElementSibling) {
+    if (input.value && input.nextElementSibling) {
       input.nextElementSibling.classList.add('active');
     }
   });
@@ -982,7 +1316,7 @@ window.editDesignItem = function(id) {
   addDesignModal.classList.add('active');
 }
 
-window.deleteDesignItem = function(id) {
+window.deleteDesignItem = function (id) {
   if (currentUser && currentUser.role === 'platform') return;
   if (confirm("Are you sure you want to delete this design?")) {
     designs = designs.filter(d => String(d.id) !== String(id));
@@ -999,69 +1333,99 @@ window.deleteDesignItem = function(id) {
 // User Platforms Assignment Modal Logic
 let activeAssignUser = '';
 
-window.openUserPlatformsModal = function(username) {
+window.openUserPlatformsModal = function (username) {
   activeAssignUser = username;
   const modal = document.getElementById('userPlatformsModal');
   const title = document.getElementById('userPlatformsModalTitle');
   const container = document.getElementById('userPlatformsList');
-  
+
   if (!modal || !title || !container) return;
-  
+
   title.innerText = `Manage Platforms for "${username}"`;
-  
+
   const user = appUsers.find(u => u.username === username);
   if (!user) return;
-  
+
   const assignedPlats = user.permissions && user.permissions.platforms ? user.permissions.platforms : [];
-  
-  container.innerHTML = platforms.map(plat => {
+
+  const portalPlats = platforms.filter(p => getPlatformCategory(p) === 'portal');
+  const vendorPlats = platforms.filter(p => getPlatformCategory(p) === 'vendor');
+  const shopPlats = platforms.filter(p => getPlatformCategory(p) === 'shop');
+
+  const renderUserPlatLabel = (plat) => {
     const isChecked = assignedPlats.includes(plat);
     return `
-      <label class="permission-checkbox-label ${isChecked ? 'active' : ''}" style="width: 100%; display: flex; justify-content: space-between; border-radius: 8px; padding: 0.75rem 1rem; align-items: center; margin-bottom: 0.5rem;">
-        <span style="text-transform: uppercase; font-weight: 700; font-size: 0.9rem;">${plat}</span>
+      <label class="permission-checkbox-label ${isChecked ? 'active' : ''}" style="width: 100%; display: flex; justify-content: space-between; border-radius: 8px; padding: 0.65rem 1rem; align-items: center; margin-bottom: 0.4rem;">
+        <span style="font-weight: 700; font-size: 0.88rem;">${plat}</span>
         <input type="checkbox" class="user-plat-checkbox" value="${plat}" ${isChecked ? 'checked' : ''} onchange="this.parentElement.classList.toggle('active', this.checked)">
       </label>
     `;
-  }).join('');
-  
+  };
+
+  container.innerHTML = `
+    <!-- Portal Platforms -->
+    <div style="margin-bottom: 1rem;">
+      <div style="font-size: 0.85rem; font-weight: 800; color: #0284c7; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 0.35rem;">
+        <i data-lucide="globe" style="width: 14px; height: 14px;"></i> Portal Platforms (${portalPlats.length})
+      </div>
+      ${portalPlats.map(renderUserPlatLabel).join('')}
+    </div>
+
+    <!-- Shop Platforms -->
+    <div style="margin-bottom: 1rem;">
+      <div style="font-size: 0.85rem; font-weight: 800; color: #b45309; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 0.35rem;">
+        <i data-lucide="store" style="width: 14px; height: 14px;"></i> Shop Platforms (${shopPlats.length})
+      </div>
+      ${shopPlats.map(renderUserPlatLabel).join('')}
+    </div>
+
+    <!-- Vendor Platforms -->
+    <div style="margin-bottom: 0.5rem;">
+      <div style="font-size: 0.85rem; font-weight: 800; color: #7c3aed; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 0.35rem;">
+        <i data-lucide="truck" style="width: 14px; height: 14px;"></i> Vendor Platforms (${vendorPlats.length})
+      </div>
+      ${vendorPlats.map(renderUserPlatLabel).join('')}
+    </div>
+  `;
+
   modal.classList.add('active');
   lucide.createIcons();
 }
 
-window.closeUserPlatformsModal = function() {
+window.closeUserPlatformsModal = function () {
   const modal = document.getElementById('userPlatformsModal');
   if (modal) modal.classList.remove('active');
 }
 
-window.saveUserPlatformsAssignment = async function() {
+window.saveUserPlatformsAssignment = async function () {
   if (!activeAssignUser) return;
-  
+
   const userIndex = appUsers.findIndex(u => u.username === activeAssignUser);
   if (userIndex === -1) return;
-  
+
   const checkboxes = document.querySelectorAll('.user-plat-checkbox');
   const selectedPlatforms = Array.from(checkboxes)
     .filter(cb => cb.checked)
     .map(cb => cb.value);
-  
+
   if (!appUsers[userIndex].permissions) {
     appUsers[userIndex].permissions = { tabs: ['dashboard', 'pending', 'completed'], platforms: [] };
   }
-  
+
   appUsers[userIndex].permissions.platforms = selectedPlatforms;
-  
+
   // Save updated appUsers database
   await saveUsersDb();
-  
+
   alert(`Platform allocations for user "${activeAssignUser}" updated successfully!`);
-  
+
   closeUserPlatformsModal();
   renderUsersManager();
   renderGrids();
 }
 
 // Platform Details Modal Logic
-window.removePlatformFromDesign = async function(designId, platformName) {
+window.removePlatformFromDesign = async function (designId, platformName) {
   if (confirm(`Are you sure you want to remove "${platformName}" from this design?`)) {
     const design = designs.find(d => String(d.id) === String(designId));
     if (design) {
@@ -1074,7 +1438,7 @@ window.removePlatformFromDesign = async function(designId, platformName) {
   }
 }
 
-window.addPlatformToDesign = async function(designId) {
+window.addPlatformToDesign = async function (designId) {
   const select = document.getElementById('addPlatformToDesignSelect');
   const priceInput = document.getElementById('addPlatformToDesignPrice');
   if (!select) return;
@@ -1087,7 +1451,7 @@ window.addPlatformToDesign = async function(designId) {
   if (!priceVal || priceVal.trim() === '' || priceVal === '0') {
     priceVal = '1';
   }
-  
+
   const design = designs.find(d => String(d.id) === String(designId));
   if (design) {
     sanitizeDesignPlatforms(design);
@@ -1105,7 +1469,7 @@ window.addPlatformToDesign = async function(designId) {
   }
 }
 
-window.openPlatformDetails = function(id) {
+window.openPlatformDetails = function (id) {
   const design = designs.find(d => String(d.id) === String(id));
   if (!design) return;
 
@@ -1116,43 +1480,82 @@ window.openPlatformDetails = function(id) {
   document.getElementById('detailPrice').innerText = getPriceDisplay(design);
 
   const list = document.getElementById('platformDetailsList');
-  
+
   const isPlatformUser = currentUser && currentUser.role === 'platform';
-  const filteredPlatforms = isPlatformUser 
-    ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name)) 
+  const filteredPlatforms = isPlatformUser
+    ? design.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name))
     : design.platforms;
+
+  const portalPlats = filteredPlatforms.filter(p => getPlatformCategory(p.name) === 'portal');
+  const vendorPlats = filteredPlatforms.filter(p => getPlatformCategory(p.name) === 'vendor');
+  const shopPlats = filteredPlatforms.filter(p => getPlatformCategory(p.name) === 'shop');
+
+  const renderPlatCard = (p) => `
+    <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 0.75rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <span style="font-weight: 800; font-size: 1.1rem; color: ${p.status === 'completed' ? '#10b981' : 'var(--text-color)'};">
+          ${p.name}
+        </span>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <label class="checkbox-wrapper" style="margin-bottom: 0;">
+            <input type="checkbox" ${p.status === 'completed' ? 'checked' : ''} onchange="togglePlatformStatus('${design.id}', '${p.name}', this.checked)" />
+            <span class="checkbox-text">Completed</span>
+          </label>
+          ${isPlatformUser ? '' : `
+            <button class="btn" style="padding: 0.3rem 0.5rem; background: #fee2e2; color: #ef4444; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center;" onclick="removePlatformFromDesign('${design.id}', '${p.name}')" title="Remove Platform from Design">
+              <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+            </button>
+          `}
+        </div>
+      </div>
+      
+      <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem;">
+        <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-muted);">Price (₹)</div>
+        <input type="number" class="material-input" value="${p.price || ''}" onchange="updatePlatformPrice('${design.id}', '${p.name}', this.value)" style="margin-bottom: 0; padding: 0.4rem; font-size: 0.9rem; width: 100px; background: white;" ${isPlatformUser ? 'disabled' : ''} />
+      </div>
+
+      <input type="text" class="material-input" placeholder="Add a note or link..." value="${p.note || ''}" onchange="updatePlatformNote('${design.id}', '${p.name}', this.value)" style="margin-bottom: 0; background: white;" />
+    </div>
+  `;
 
   if (filteredPlatforms.length === 0) {
     list.innerHTML = `<div style="color: var(--text-muted); text-align: center; padding: 1rem;">No platforms assigned.</div>`;
   } else {
-    list.innerHTML = filteredPlatforms.map(p => `
-      <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color);">
-        
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-          <span style="font-weight: 800; font-size: 1.1rem; color: ${p.status === 'completed' ? '#10b981' : 'var(--text-color)'};">
-            ${p.name}
-          </span>
-          <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <label class="checkbox-wrapper" style="margin-bottom: 0;">
-              <input type="checkbox" ${p.status === 'completed' ? 'checked' : ''} onchange="togglePlatformStatus('${design.id}', '${p.name}', this.checked)" />
-              <span class="checkbox-text">Completed</span>
-            </label>
-            ${isPlatformUser ? '' : `
-              <button class="btn" style="padding: 0.3rem 0.5rem; background: #fee2e2; color: #ef4444; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center;" onclick="removePlatformFromDesign('${design.id}', '${p.name}')" title="Remove Platform from Design">
-                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
-              </button>
-            `}
+    let detailsHtml = '';
+    if (portalPlats.length > 0) {
+      detailsHtml += `
+        <div class="modal-plat-section-header modal-plat-portal-header">
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <i data-lucide="globe" style="width: 15px; height: 15px;"></i>
+            <span>Portal Platforms (${portalPlats.length})</span>
           </div>
         </div>
-        
-        <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem;">
-          <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-muted);">Price (₹)</div>
-          <input type="number" class="material-input" value="${p.price || ''}" onchange="updatePlatformPrice('${design.id}', '${p.name}', this.value)" style="margin-bottom: 0; padding: 0.4rem; font-size: 0.9rem; width: 100px; background: white;" ${isPlatformUser ? 'disabled' : ''} />
+        ${portalPlats.map(renderPlatCard).join('')}
+      `;
+    }
+    if (shopPlats.length > 0) {
+      detailsHtml += `
+        <div class="modal-plat-section-header modal-plat-shop-header" style="margin-top: 1rem;">
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <i data-lucide="store" style="width: 15px; height: 15px;"></i>
+            <span>Shop Platforms (${shopPlats.length})</span>
+          </div>
         </div>
-
-        <input type="text" class="material-input" placeholder="Add a note..." value="${p.note || ''}" onchange="updatePlatformNote('${design.id}', '${p.name}', this.value)" style="margin-bottom: 0; background: white;" />
-      </div>
-    `).join('');
+        ${shopPlats.map(renderPlatCard).join('')}
+      `;
+    }
+    if (vendorPlats.length > 0) {
+      detailsHtml += `
+        <div class="modal-plat-section-header modal-plat-vendor-header" style="margin-top: 1rem;">
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <i data-lucide="truck" style="width: 15px; height: 15px;"></i>
+            <span>Vendor Platforms (${vendorPlats.length})</span>
+          </div>
+        </div>
+        ${vendorPlats.map(renderPlatCard).join('')}
+      `;
+    }
+    list.innerHTML = detailsHtml;
   }
 
   // Populate Add Platform to Design Section for Admin Users
@@ -1164,7 +1567,7 @@ window.openPlatformDetails = function(id) {
       addSection.style.display = 'block';
       const select = document.getElementById('addPlatformToDesignSelect');
       const addBtn = document.getElementById('addPlatformToDesignBtn');
-      
+
       const existingNames = (design.platforms || []).map(p => p.name);
       const availablePlatforms = platforms.filter(p => !existingNames.includes(p));
 
@@ -1179,7 +1582,7 @@ window.openPlatformDetails = function(id) {
       }
 
       if (addBtn) {
-        addBtn.onclick = function() {
+        addBtn.onclick = function () {
           addPlatformToDesign(design.id);
         };
       }
@@ -1190,14 +1593,14 @@ window.openPlatformDetails = function(id) {
   lucide.createIcons();
 }
 
-window.closePlatformDetailsModal = function() {
+window.closePlatformDetailsModal = function () {
   platformDetailsModal.classList.remove('active');
 }
 
 // Stock Status Selector Modal Logic
 let selectedStockDesignId = null;
 
-window.openStockStatusModal = function(id) {
+window.openStockStatusModal = function (id) {
   selectedStockDesignId = id;
   if (stockStatusModal) {
     stockStatusModal.classList.add('active');
@@ -1205,14 +1608,14 @@ window.openStockStatusModal = function(id) {
   }
 }
 
-window.closeStockStatusModal = function() {
+window.closeStockStatusModal = function () {
   if (stockStatusModal) {
     stockStatusModal.classList.remove('active');
   }
   selectedStockDesignId = null;
 }
 
-window.setDesignStockStatus = async function(status) {
+window.setDesignStockStatus = async function (status) {
   if (!selectedStockDesignId) return;
   const design = designs.find(d => String(d.id) === String(selectedStockDesignId));
   if (design) {
@@ -1227,19 +1630,19 @@ window.setDesignStockStatus = async function(status) {
   closeStockStatusModal();
 }
 
-window.togglePlatformStatus = function(designId, platformName, isCompleted) {
+window.togglePlatformStatus = function (designId, platformName, isCompleted) {
   const design = designs.find(d => String(d.id) === String(designId));
   if (!design) return;
   const p = design.platforms.find(pl => pl.name === platformName);
   if (p) p.status = isCompleted ? 'completed' : 'pending';
   saveData();
   renderGrids();
-  
+
   // Re-render the details list to update colors while the modal is open
-  openPlatformDetails(designId); 
+  openPlatformDetails(designId);
 }
 
-window.updatePlatformNote = function(designId, platformName, noteValue) {
+window.updatePlatformNote = function (designId, platformName, noteValue) {
   const design = designs.find(d => String(d.id) === String(designId));
   if (!design) return;
   const p = design.platforms.find(pl => pl.name === platformName);
@@ -1247,7 +1650,7 @@ window.updatePlatformNote = function(designId, platformName, noteValue) {
   saveData();
 }
 
-window.updatePlatformPrice = function(designId, platformName, priceValue) {
+window.updatePlatformPrice = function (designId, platformName, priceValue) {
   const design = designs.find(d => String(d.id) === String(designId));
   if (!design) return;
   const p = design.platforms.find(pl => pl.name === platformName);
@@ -1266,10 +1669,10 @@ document.body.addEventListener('click', (e) => {
   if (avatarItem) {
     document.querySelectorAll('.avatar-item').forEach(el => el.classList.remove('active'));
     avatarItem.classList.add('active');
-    
+
     const username = avatarItem.getAttribute('data-username');
     document.getElementById('loginUserSelect').value = username;
-    
+
     // Auto-focus PIN input
     const pinInput = document.getElementById('loginPinInput');
     if (pinInput) {
@@ -1285,7 +1688,7 @@ document.body.addEventListener('click', (e) => {
     window.editDesignItem(id);
     return;
   }
-  
+
   const deleteBtn = e.target.closest('.delete-design-btn');
   if (deleteBtn) {
     const id = deleteBtn.getAttribute('data-id');
@@ -1293,7 +1696,7 @@ document.body.addEventListener('click', (e) => {
     window.deleteDesignItem(id);
     return;
   }
-  
+
   const viewBtn = e.target.closest('.view-platforms-btn');
   if (viewBtn) {
     const id = viewBtn.getAttribute('data-id');
@@ -1302,6 +1705,153 @@ document.body.addEventListener('click', (e) => {
     return;
   }
 });
+
+// Card Rendering Helpers for Pending and Completed
+function renderPendingCard(design, category = 'all') {
+  const isPlatformUser = currentUser && currentUser.role === 'platform';
+  const userPermPlats = (currentUser.permissions?.platforms || []).map(p => p.toLowerCase());
+  const hasUserPlatform = (pName) => !isPlatformUser || userPermPlats.includes((pName || '').toLowerCase());
+
+  let relevantPlats = (design.platforms || []).filter(p => hasUserPlatform(p.name));
+  if (category === 'portal') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'portal');
+  } else if (category === 'vendor') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'vendor');
+  } else if (category === 'shop') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'shop');
+  }
+
+  const pendingPlats = relevantPlats.filter(p => p.status === 'pending');
+  const completedPlats = relevantPlats.filter(p => p.status === 'completed');
+
+  const catBadge = category === 'portal' 
+    ? `<span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;"><i data-lucide="globe" style="width: 10px; height: 10px;"></i> PORTAL</span>`
+    : (category === 'vendor' 
+        ? `<span style="background: #ede9fe; color: #7c3aed; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;"><i data-lucide="truck" style="width: 10px; height: 10px;"></i> VENDOR</span>`
+        : (category === 'shop'
+            ? `<span style="background: #fef3c7; color: #b45309; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;"><i data-lucide="store" style="width: 10px; height: 10px;"></i> SHOP</span>`
+            : ''));
+
+  let platColor = 'var(--text-color)';
+  if (category === 'portal') platColor = '#0284c7';
+  else if (category === 'vendor') platColor = '#7c3aed';
+  else if (category === 'shop') platColor = '#b45309';
+
+  return `
+    <div class="design-card fancy-hover" style="padding-bottom: 0; display: flex; flex-direction: column;">
+      <div class="design-image-container">
+        ${design.photo ? `<img src="${design.photo}" alt="${design.sku}" class="design-image" />` : `<div class="empty-preview" style="height: 100%; background: #eee;">No Image</div>`}
+        <div class="price-badge" style="background: var(--bg-alt); color: var(--accent-primary); border: 1px solid var(--accent-primary); font-weight: 800;">
+          ${getPriceDisplay(design, category)}
+        </div>
+        ${catBadge ? `<div style="position: absolute; top: 10px; left: 10px; z-index: 2;">${catBadge}</div>` : ''}
+      </div>
+      
+      <div class="design-info" style="flex: 1;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <div class="design-sku">${design.sku}</div>
+          <div style="display: flex; gap: 0.25rem;">
+            ${isPlatformUser ? '' : `
+              <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
+                <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
+              </button>
+              <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+              </button>
+            `}
+          </div>
+        </div>
+        <div class="design-platform" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
+          Platforms: <span style="font-weight: 700; color: ${platColor};">${pendingPlats.map(p => p.name).join(', ') || 'None'}</span><br/>
+          <span style="color: ${completedPlats.length > 0 ? 'var(--accent-primary)' : 'inherit'}; font-weight: 600;">
+            (${completedPlats.length}/${relevantPlats.length} Completed)
+          </span>
+        </div>
+      </div>
+
+      <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
+        ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
+      </button>
+    </div>
+  `;
+}
+
+function renderCompletedCard(design, category = 'all') {
+  const isPlatformUser = currentUser && currentUser.role === 'platform';
+  const userPermPlats = (currentUser.permissions?.platforms || []).map(p => p.toLowerCase());
+  const hasUserPlatform = (pName) => !isPlatformUser || userPermPlats.includes((pName || '').toLowerCase());
+
+  let relevantPlats = (design.platforms || []).filter(p => hasUserPlatform(p.name));
+  if (category === 'portal') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'portal');
+  } else if (category === 'vendor') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'vendor');
+  } else if (category === 'shop') {
+    relevantPlats = relevantPlats.filter(p => getPlatformCategory(p.name) === 'shop');
+  }
+
+  const completedPlats = relevantPlats.filter(p => p.status === 'completed');
+  const isFullyCompleted = relevantPlats.length > 0 && relevantPlats.every(p => p.status === 'completed');
+
+  const catBadge = category === 'portal' 
+    ? `<span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;"><i data-lucide="globe" style="width: 10px; height: 10px;"></i> PORTAL</span>`
+    : (category === 'vendor' 
+        ? `<span style="background: #ede9fe; color: #7c3aed; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;"><i data-lucide="truck" style="width: 10px; height: 10px;"></i> VENDOR</span>`
+        : (category === 'shop'
+            ? `<span style="background: #fef3c7; color: #b45309; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;"><i data-lucide="store" style="width: 10px; height: 10px;"></i> SHOP</span>`
+            : ''));
+
+  let platColor = 'var(--text-color)';
+  if (category === 'portal') platColor = '#0284c7';
+  else if (category === 'vendor') platColor = '#7c3aed';
+  else if (category === 'shop') platColor = '#b45309';
+
+  return `
+    <div class="design-card fancy-hover" style="opacity: 0.9; display: flex; flex-direction: column;">
+      <div class="design-image-container" onclick="openStockStatusModal('${design.id}')" style="cursor: pointer;" title="Click image to change stock status">
+        ${design.photo ? `<img src="${design.photo}" alt="${design.sku}" class="design-image" style="filter: ${isFullyCompleted ? 'grayscale(20%)' : 'none'};" />` : `<div class="empty-preview" style="height: 100%; background: #eee;">No Image</div>`}
+        <div class="price-badge" style="background: ${isFullyCompleted ? '#10b981' : '#f59e0b'}; color: white; font-weight: 800;">
+          ${getPriceDisplay(design, category)}
+        </div>
+        ${catBadge ? `<div style="position: absolute; top: 10px; left: 10px; z-index: 2;">${catBadge}</div>` : ''}
+        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; display: flex; align-items: center; gap: 4px;">
+          <i data-lucide="info" style="width: 10px; height: 10px;"></i> Click to set Stock
+        </div>
+      </div>
+      
+      <div class="design-info" style="flex: 1;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <div>
+            <div class="design-sku">${design.sku}</div>
+            <span class="completed-tag" style="margin-top: 0.25rem; color: ${isFullyCompleted ? '#10b981' : '#d97706'}; font-weight: 700; display: flex; align-items: center; gap: 0.25rem;">
+              <i data-lucide="${isFullyCompleted ? 'check' : 'clock'}" style="width: 14px; height: 14px;"></i>
+              ${isFullyCompleted ? 'Completed' : 'Partially Completed'}
+            </span>
+          </div>
+          <div style="display: flex; gap: 0.25rem;">
+            ${isPlatformUser ? '' : `
+              <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
+                <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
+              </button>
+              <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+              </button>
+            `}
+          </div>
+        </div>
+        <div class="design-platform" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
+          Platforms: <span style="font-weight: 700; color: ${platColor};">${completedPlats.map(p => p.name).join(', ') || 'None'}</span><br/>
+          <span style="color: ${isFullyCompleted ? '#10b981' : '#d97706'}; font-weight: 600;">
+            (${completedPlats.length}/${relevantPlats.length} Completed)
+          </span>
+        </div>
+      </div>
+      <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
+        ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
+      </button>
+    </div>
+  `;
+}
 
 // Render UI
 function renderGrids() {
@@ -1312,7 +1862,7 @@ function renderGrids() {
     sanitizeDesignPlatforms(d);
     // Fallback: If a design has 0 platforms, auto-assign active platforms so it never vanishes
     if (!d.platforms || d.platforms.length === 0) {
-      const activePlats = (platforms && platforms.length > 0) ? platforms : ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
+      const activePlats = (platforms && platforms.length > 0) ? platforms : ['vender', 'b2b', 'shop', 'website', 'bholo'];
       d.platforms = activePlats.map(p => ({
         name: p,
         status: 'pending',
@@ -1331,17 +1881,42 @@ function renderGrids() {
   const userPermPlats = (currentUser.permissions?.platforms || []).map(p => p.toLowerCase());
   const hasUserPlatform = (pName) => !isPlatformUser || userPermPlats.includes((pName || '').toLowerCase());
 
-  // Filter designs based on role and status
-  const pending = designs.filter(d => {
+  // Filter designs for Portal Pending, Shop Pending, Vendor Pending and Total Pending
+  const portalPending = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
-    return d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'pending') && matchesSearch;
+    return d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'portal' && p.status === 'pending') && matchesSearch;
   });
 
-  const completed = designs.filter(d => {
+  const shopPending = designs.filter(d => {
+    if (!d.platforms) return false;
+    const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
+    return d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'shop' && p.status === 'pending') && matchesSearch;
+  });
+
+  const vendorPending = designs.filter(d => {
+    if (!d.platforms) return false;
+    const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
+    return d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'vendor' && p.status === 'pending') && matchesSearch;
+  });
+
+  // Filter designs for Portal Completed, Shop Completed, Vendor Completed and Total Completed
+  const portalCompleted = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
-    return d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed') && matchesSearch;
+    return d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'portal' && p.status === 'completed') && matchesSearch;
+  });
+
+  const shopCompleted = designs.filter(d => {
+    if (!d.platforms) return false;
+    const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
+    return d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'shop' && p.status === 'completed') && matchesSearch;
+  });
+
+  const vendorCompleted = designs.filter(d => {
+    if (!d.platforms) return false;
+    const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
+    return d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'vendor' && p.status === 'completed') && matchesSearch;
   });
 
   const stockOut = designs.filter(d => {
@@ -1359,22 +1934,47 @@ function renderGrids() {
   });
 
   // Calculate stats counts based on role (not search filter)
-  const totalPending = designs.filter(d => 
+  const totalPending = designs.filter(d =>
     d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'pending')
   ).length;
 
-  const totalCompleted = designs.filter(d => 
+  const totalCompleted = designs.filter(d =>
     d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed')
   ).length;
 
-  const totalStockOut = designs.filter(d => 
+  const portalPendingCount = designs.filter(d =>
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'portal' && p.status === 'pending')
+  ).length;
+
+  const portalCompletedCount = designs.filter(d =>
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'portal' && p.status === 'completed')
+  ).length;
+
+  const shopPendingCount = designs.filter(d =>
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'shop' && p.status === 'pending')
+  ).length;
+
+  const shopCompletedCount = designs.filter(d =>
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'shop' && p.status === 'completed')
+  ).length;
+
+  const vendorPendingCount = designs.filter(d =>
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'vendor' && p.status === 'pending')
+  ).length;
+
+  const vendorCompletedCount = designs.filter(d =>
+    d.platforms && d.platforms.some(p => hasUserPlatform(p.name) && getPlatformCategory(p.name) === 'vendor' && p.status === 'completed')
+  ).length;
+
+  const totalStockOut = designs.filter(d =>
     d.platforms && d.stockStatus === 'out' && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed')
   ).length;
 
-  const totalStockIn = designs.filter(d => 
+  const totalStockIn = designs.filter(d =>
     d.platforms && d.stockStatus === 'in' && d.platforms.some(p => hasUserPlatform(p.name) && p.status === 'completed')
   ).length;
 
+  // Update Main Dashboard Stats
   const pendingCountEl = document.getElementById('pendingCount');
   const completedCountEl = document.getElementById('completedCount');
   const stockOutCountEl = document.getElementById('stockOutCount');
@@ -1384,111 +1984,197 @@ function renderGrids() {
   if (stockOutCountEl) stockOutCountEl.innerText = totalStockOut;
   if (stockInCountEl) stockInCountEl.innerText = totalStockIn;
 
-  // Render Pending
-  if (pending.length === 0) {
-    pendingEmptyState.style.display = 'block';
-    pendingGrid.innerHTML = '';
-  } else {
-    pendingEmptyState.style.display = 'none';
-    pendingGrid.innerHTML = pending.map(design => {
-      const userAssignedPlats = design.platforms.filter(p => hasUserPlatform(p.name));
-      const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
+  // Update Portal, Shop & Vendor Dashboard Breakdown Stats
+  const portalPendingCountEl = document.getElementById('portalPendingCount');
+  const portalCompletedCountEl = document.getElementById('portalCompletedCount');
+  const shopPendingCountEl = document.getElementById('shopPendingCount');
+  const shopCompletedCountEl = document.getElementById('shopCompletedCount');
+  const vendorPendingCountEl = document.getElementById('vendorPendingCount');
+  const vendorCompletedCountEl = document.getElementById('vendorCompletedCount');
+  if (portalPendingCountEl) portalPendingCountEl.innerText = portalPendingCount;
+  if (portalCompletedCountEl) portalCompletedCountEl.innerText = portalCompletedCount;
+  if (shopPendingCountEl) shopPendingCountEl.innerText = shopPendingCount;
+  if (shopCompletedCountEl) shopCompletedCountEl.innerText = shopCompletedCount;
+  if (vendorPendingCountEl) vendorPendingCountEl.innerText = vendorPendingCount;
+  if (vendorCompletedCountEl) vendorCompletedCountEl.innerText = vendorCompletedCount;
 
-      return `
-        <div class="design-card fancy-hover" style="padding-bottom: 0; display: flex; flex-direction: column;">
-          <div class="design-image-container">
-            ${design.photo ? `<img src="${design.photo}" alt="${design.sku}" class="design-image" />` : `<div class="empty-preview" style="height: 100%; background: #eee;">No Image</div>`}
-            <div class="price-badge" style="background: var(--bg-alt); color: var(--accent-primary); border: 1px solid var(--accent-primary); font-weight: 800;">
-              ${getPriceDisplay(design)}
-            </div>
-          </div>
-          
-          <div class="design-info" style="flex: 1;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-              <div class="design-sku">${design.sku}</div>
-              <div style="display: flex; gap: 0.25rem;">
-                ${isPlatformUser ? '' : `
-                  <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
-                    <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
-                  </button>
-                  <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
-                    <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
-                  </button>
-                `}
+  // Update Filter Badges
+  const pendingPortalFilterBadge = document.getElementById('pendingPortalFilterBadge');
+  const pendingShopFilterBadge = document.getElementById('pendingShopFilterBadge');
+  const pendingVendorFilterBadge = document.getElementById('pendingVendorFilterBadge');
+  const pendingAllFilterBadge = document.getElementById('pendingAllFilterBadge');
+  if (pendingPortalFilterBadge) pendingPortalFilterBadge.innerText = portalPendingCount;
+  if (pendingShopFilterBadge) pendingShopFilterBadge.innerText = shopPendingCount;
+  if (pendingVendorFilterBadge) pendingVendorFilterBadge.innerText = vendorPendingCount;
+  if (pendingAllFilterBadge) pendingAllFilterBadge.innerText = totalPending;
+
+  const completedPortalFilterBadge = document.getElementById('completedPortalFilterBadge');
+  const completedShopFilterBadge = document.getElementById('completedShopFilterBadge');
+  const completedVendorFilterBadge = document.getElementById('completedVendorFilterBadge');
+  const completedAllFilterBadge = document.getElementById('completedAllFilterBadge');
+  if (completedPortalFilterBadge) completedPortalFilterBadge.innerText = portalCompletedCount;
+  if (completedShopFilterBadge) completedShopFilterBadge.innerText = shopCompletedCount;
+  if (completedVendorFilterBadge) completedVendorFilterBadge.innerText = vendorCompletedCount;
+  if (completedAllFilterBadge) completedAllFilterBadge.innerText = totalCompleted;
+
+  // Render Pending Section (Divided into Portal, Shop and Vendor)
+  if (pendingActiveCategory === 'portal') {
+    if (portalPending.length === 0) {
+      pendingEmptyState.style.display = 'block';
+      pendingEmptyState.innerText = 'No portal pending designs found.';
+      pendingGrid.innerHTML = '';
+    } else {
+      pendingEmptyState.style.display = 'none';
+      pendingGrid.innerHTML = portalPending.map(d => renderPendingCard(d, 'portal')).join('');
+    }
+  } else if (pendingActiveCategory === 'shop') {
+    if (shopPending.length === 0) {
+      pendingEmptyState.style.display = 'block';
+      pendingEmptyState.innerText = 'No shop pending designs found.';
+      pendingGrid.innerHTML = '';
+    } else {
+      pendingEmptyState.style.display = 'none';
+      pendingGrid.innerHTML = shopPending.map(d => renderPendingCard(d, 'shop')).join('');
+    }
+  } else if (pendingActiveCategory === 'vendor') {
+    if (vendorPending.length === 0) {
+      pendingEmptyState.style.display = 'block';
+      pendingEmptyState.innerText = 'No vendor pending designs found.';
+      pendingGrid.innerHTML = '';
+    } else {
+      pendingEmptyState.style.display = 'none';
+      pendingGrid.innerHTML = vendorPending.map(d => renderPendingCard(d, 'vendor')).join('');
+    }
+  } else {
+    // 'all' category: render all three sections cleanly with headers
+    if (portalPending.length === 0 && vendorPending.length === 0 && shopPending.length === 0) {
+      pendingEmptyState.style.display = 'block';
+      pendingEmptyState.innerText = 'No pending designs found. Add one above!';
+      pendingGrid.innerHTML = '';
+    } else {
+      pendingEmptyState.style.display = 'none';
+      let html = '';
+      if (portalPending.length > 0) {
+        html += `
+          <div style="grid-column: 1 / -1; margin-top: 0.25rem;">
+            <div class="section-subgroup-header">
+              <div class="section-subgroup-title subgroup-portal-title">
+                <i data-lucide="globe" style="width: 18px; height: 18px;"></i>
+                <span>Portal Pending Designs (${portalPending.length})</span>
               </div>
             </div>
-            <div class="design-platform" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
-              Platforms: <span style="font-weight: 600; color: var(--text-color);">${userAssignedPlats.filter(p => p.status === 'pending').map(p => p.name).join(', ')}</span><br/>
-              <span style="color: ${userCompletedPlats.length > 0 ? 'var(--accent-primary)' : 'inherit'};">
-                (${userCompletedPlats.length}/${userAssignedPlats.length} Completed)
-              </span>
+          </div>
+          ${portalPending.map(d => renderPendingCard(d, 'portal')).join('')}
+        `;
+      }
+      if (shopPending.length > 0) {
+        html += `
+          <div style="grid-column: 1 / -1; margin-top: 1.5rem;">
+            <div class="section-subgroup-header">
+              <div class="section-subgroup-title subgroup-shop-title">
+                <i data-lucide="store" style="width: 18px; height: 18px;"></i>
+                <span>Shop Pending Designs (${shopPending.length})</span>
+              </div>
             </div>
           </div>
-
-          <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
-            ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
-          </button>
-        </div>
-      `;
-    }).join('');
+          ${shopPending.map(d => renderPendingCard(d, 'shop')).join('')}
+        `;
+      }
+      if (vendorPending.length > 0) {
+        html += `
+          <div style="grid-column: 1 / -1; margin-top: 1.5rem;">
+            <div class="section-subgroup-header">
+              <div class="section-subgroup-title subgroup-vendor-title">
+                <i data-lucide="truck" style="width: 18px; height: 18px;"></i>
+                <span>Vendor Pending Designs (${vendorPending.length})</span>
+              </div>
+            </div>
+          </div>
+          ${vendorPending.map(d => renderPendingCard(d, 'vendor')).join('')}
+        `;
+      }
+      pendingGrid.innerHTML = html;
+    }
   }
 
-  // Render Completed
-  if (completed.length === 0) {
-    completedEmptyState.style.display = 'block';
-    completedGrid.innerHTML = '';
+  // Render Completed Section (Divided into Portal, Shop and Vendor)
+  if (completedActiveCategory === 'portal') {
+    if (portalCompleted.length === 0) {
+      completedEmptyState.style.display = 'block';
+      completedEmptyState.innerText = 'No portal completed designs found yet.';
+      completedGrid.innerHTML = '';
+    } else {
+      completedEmptyState.style.display = 'none';
+      completedGrid.innerHTML = portalCompleted.map(d => renderCompletedCard(d, 'portal')).join('');
+    }
+  } else if (completedActiveCategory === 'shop') {
+    if (shopCompleted.length === 0) {
+      completedEmptyState.style.display = 'block';
+      completedEmptyState.innerText = 'No shop completed designs found yet.';
+      completedGrid.innerHTML = '';
+    } else {
+      completedEmptyState.style.display = 'none';
+      completedGrid.innerHTML = shopCompleted.map(d => renderCompletedCard(d, 'shop')).join('');
+    }
+  } else if (completedActiveCategory === 'vendor') {
+    if (vendorCompleted.length === 0) {
+      completedEmptyState.style.display = 'block';
+      completedEmptyState.innerText = 'No vendor completed designs found yet.';
+      completedGrid.innerHTML = '';
+    } else {
+      completedEmptyState.style.display = 'none';
+      completedGrid.innerHTML = vendorCompleted.map(d => renderCompletedCard(d, 'vendor')).join('');
+    }
   } else {
-    completedEmptyState.style.display = 'none';
-    completedGrid.innerHTML = completed.map(design => {
-      const userAssignedPlats = design.platforms.filter(p => hasUserPlatform(p.name));
-      const userCompletedPlats = userAssignedPlats.filter(p => p.status === 'completed');
-      const isFullyCompleted = userAssignedPlats.length > 0 && userAssignedPlats.every(p => p.status === 'completed');
-
-      return `
-        <div class="design-card fancy-hover" style="opacity: 0.9; display: flex; flex-direction: column;">
-          <div class="design-image-container" onclick="openStockStatusModal('${design.id}')" style="cursor: pointer;" title="Click image to change stock status">
-            ${design.photo ? `<img src="${design.photo}" alt="${design.sku}" class="design-image" style="filter: ${isFullyCompleted ? 'grayscale(20%)' : 'none'};" />` : `<div class="empty-preview" style="height: 100%; background: #eee;">No Image</div>`}
-            <div class="price-badge" style="background: ${isFullyCompleted ? '#10b981' : '#f59e0b'}; color: white; font-weight: 800;">
-              ${getPriceDisplay(design)}
-            </div>
-            <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; display: flex; align-items: center; gap: 4px;">
-              <i data-lucide="info" style="width: 10px; height: 10px;"></i> Click to set Stock
-            </div>
-          </div>
-          
-          <div class="design-info" style="flex: 1;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-              <div>
-                <div class="design-sku">${design.sku}</div>
-                <span class="completed-tag" style="margin-top: 0.25rem; color: ${isFullyCompleted ? '#10b981' : '#d97706'}; font-weight: 700; display: flex; align-items: center; gap: 0.25rem;">
-                  <i data-lucide="${isFullyCompleted ? 'check' : 'clock'}" style="width: 14px; height: 14px;"></i>
-                  ${isFullyCompleted ? 'Completed' : 'Partially Completed'}
-                </span>
-              </div>
-              <div style="display: flex; gap: 0.25rem;">
-                ${isPlatformUser ? '' : `
-                  <button class="btn edit-design-btn" style="padding: 0.25rem; background: transparent; color: var(--text-muted);" data-id="${design.id}" title="Edit">
-                    <i data-lucide="edit-2" style="width: 14px; height: 14px;"></i>
-                  </button>
-                  <button class="btn delete-design-btn" style="padding: 0.25rem; background: transparent; color: #ef4444;" data-id="${design.id}" title="Delete">
-                    <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
-                  </button>
-                `}
+    // 'all' category: render all three sections cleanly with headers
+    if (portalCompleted.length === 0 && vendorCompleted.length === 0 && shopCompleted.length === 0) {
+      completedEmptyState.style.display = 'block';
+      completedEmptyState.innerText = 'No completed designs found yet.';
+      completedGrid.innerHTML = '';
+    } else {
+      completedEmptyState.style.display = 'none';
+      let html = '';
+      if (portalCompleted.length > 0) {
+        html += `
+          <div style="grid-column: 1 / -1; margin-top: 0.25rem;">
+            <div class="section-subgroup-header">
+              <div class="section-subgroup-title subgroup-portal-title">
+                <i data-lucide="globe" style="width: 18px; height: 18px;"></i>
+                <span>Portal Completed Designs (${portalCompleted.length})</span>
               </div>
             </div>
-            <div class="design-platform" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
-              Platforms: <span style="font-weight: 600; color: var(--text-color);">${userCompletedPlats.map(p => p.name).join(', ')}</span><br/>
-              <span style="color: ${isFullyCompleted ? '#10b981' : '#d97706'};">
-                (${userCompletedPlats.length}/${userAssignedPlats.length} Completed)
-              </span>
+          </div>
+          ${portalCompleted.map(d => renderCompletedCard(d, 'portal')).join('')}
+        `;
+      }
+      if (shopCompleted.length > 0) {
+        html += `
+          <div style="grid-column: 1 / -1; margin-top: 1.5rem;">
+            <div class="section-subgroup-header">
+              <div class="section-subgroup-title subgroup-shop-title">
+                <i data-lucide="store" style="width: 18px; height: 18px;"></i>
+                <span>Shop Completed Designs (${shopCompleted.length})</span>
+              </div>
             </div>
           </div>
-          <button class="btn btn-primary view-platforms-btn" style="width: 100%; border-radius: 0 0 12px 12px; padding: 0.75rem; background: var(--bg-alt); color: var(--accent-primary); border-top: 1px solid var(--border-color); font-weight: 600;" data-id="${design.id}">
-            ${isPlatformUser ? 'Edit Notes / Status' : 'View Platforms'}
-          </button>
-        </div>
-      `;
-    }).join('');
+          ${shopCompleted.map(d => renderCompletedCard(d, 'shop')).join('')}
+        `;
+      }
+      if (vendorCompleted.length > 0) {
+        html += `
+          <div style="grid-column: 1 / -1; margin-top: 1.5rem;">
+            <div class="section-subgroup-header">
+              <div class="section-subgroup-title subgroup-vendor-title">
+                <i data-lucide="truck" style="width: 18px; height: 18px;"></i>
+                <span>Vendor Completed Designs (${vendorCompleted.length})</span>
+              </div>
+            </div>
+          </div>
+          ${vendorCompleted.map(d => renderCompletedCard(d, 'vendor')).join('')}
+        `;
+      }
+      completedGrid.innerHTML = html;
+    }
   }
 
   // Render Stock Out
@@ -1638,13 +2324,52 @@ async function initApp() {
         return d;
       });
     }
-    
+
+    const savedDeleted = await localforage.getItem('designStudioDeletedPlatforms');
+    if (savedDeleted && Array.isArray(savedDeleted)) {
+      deletedPlatforms = savedDeleted;
+    }
+
     const savedPlatforms = await localforage.getItem('designStudioPlatforms');
     if (savedPlatforms && Array.isArray(savedPlatforms)) {
-      platforms = savedPlatforms;
+      platforms = savedPlatforms.filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
     } else {
-      platforms = ['vender', 'b2b', 'shop', 'website', 'bholo', 'portal'];
+      platforms = [
+        'AJ-JIHU', 'AJ-TN', 'AJ-DE', 'MY-JIHU', 'MY-DE', 'MY-HOP', 'MY-JIHU01', 'AMZ-JIKU', 'AMZ-KP-MY-PB',
+        'RT', 'BB', 'MS', 'CT',
+        'vender', 'b2b', 'website', 'bholo'
+      ].filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
       await localforage.setItem('designStudioPlatforms', platforms);
+    }
+
+    // Guarantee default portal platforms exist in platforms array ONLY IF NOT DELETED
+    PORTAL_PLATFORM_LIST.forEach(p => {
+      const isDeleted = deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase());
+      if (!isDeleted && !platforms.some(pl => pl.toUpperCase() === p.toUpperCase())) {
+        platforms.push(p);
+      }
+    });
+
+    // Guarantee default shop platforms exist in platforms array ONLY IF NOT DELETED
+    SHOP_PLATFORM_LIST.forEach(p => {
+      const isDeleted = deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase());
+      if (!isDeleted && !platforms.some(pl => pl.toUpperCase() === p.toUpperCase())) {
+        platforms.push(p);
+      }
+    });
+
+    // Filter designs against deleted platforms
+    if (designs && designs.length > 0) {
+      designs.forEach(d => {
+        if (d.platforms && Array.isArray(d.platforms)) {
+          d.platforms = d.platforms.filter(p => p && p.name && !deletedPlatforms.some(dp => dp.toLowerCase() === p.name.toLowerCase()));
+        }
+      });
+    }
+
+    const savedCategories = await localforage.getItem('designStudioPlatformCategories');
+    if (savedCategories && typeof savedCategories === 'object') {
+      platformCategories = savedCategories;
     }
 
     // Load users from IndexedDB
@@ -1659,11 +2384,20 @@ async function initApp() {
           updated = true;
         }
       }
-      if (updated) {
-        await localforage.setItem('designStudioUsers', appUsers);
-      }
+      // Clean up deleted platforms from all users' permissions
+      appUsers.forEach(u => {
+        if (u.permissions && u.permissions.platforms) {
+          u.permissions.platforms = u.permissions.platforms.filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
+        }
+      });
+      await localforage.setItem('designStudioUsers', appUsers);
     } else {
       appUsers = JSON.parse(JSON.stringify(DEFAULT_USERS));
+      appUsers.forEach(u => {
+        if (u.permissions && u.permissions.platforms) {
+          u.permissions.platforms = u.permissions.platforms.filter(p => !deletedPlatforms.some(dp => dp.toLowerCase() === p.toLowerCase()));
+        }
+      });
       await localforage.setItem('designStudioUsers', appUsers);
     }
 
@@ -1705,7 +2439,7 @@ async function initApp() {
 initApp();
 
 // Export Pending Designs to Excel
-window.exportPendingToExcel = function() {
+window.exportPendingToExcel = function () {
   if (typeof XLSX === 'undefined') {
     alert("Excel library is still loading or failed to load. Please try again in a moment.");
     return;
@@ -1713,15 +2447,18 @@ window.exportPendingToExcel = function() {
 
   const pendingTerm = searchPending.value.toLowerCase();
   const isPlatformUser = currentUser && currentUser.role === 'platform';
+  const category = pendingActiveCategory || 'all';
 
   const pending = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(pendingTerm) || d.description.toLowerCase().includes(pendingTerm);
-    if (isPlatformUser) {
-      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'pending') && matchesSearch;
-    } else {
-      return d.platforms.some(p => p.status === 'pending') && matchesSearch;
-    }
+    if (!matchesSearch) return false;
+
+    return d.platforms.some(p => {
+      const allowedByUser = !isPlatformUser || (currentUser.permissions?.platforms || []).includes(p.name);
+      const matchesCat = category === 'all' || getPlatformCategory(p.name) === category;
+      return allowedByUser && matchesCat && p.status === 'pending';
+    });
   });
 
   const data = [];
@@ -1732,7 +2469,11 @@ window.exportPendingToExcel = function() {
     if (isPlatformUser) {
       relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
     }
-    
+    if (category !== 'all') {
+      relevantPlatforms = relevantPlatforms.filter(p => getPlatformCategory(p.name) === category);
+    }
+    relevantPlatforms = relevantPlatforms.filter(p => p.status === 'pending');
+
     // Create a row object starting with the Design ID for Sheet 1
     const row = {
       "Design Name / No.": d.sku
@@ -1742,8 +2483,8 @@ window.exportPendingToExcel = function() {
       // Add each platform as a separate column, and its value as the price
       relevantPlatforms.forEach(p => {
         row[p.name] = p.price || 0;
-        
-        // Collect links/notes for Sheet 2 (include all platforms, even if link is empty)
+
+        // Collect links/notes for Sheet 2
         notesData.push({
           "Design Name / No.": d.sku,
           "Platform": p.name,
@@ -1762,7 +2503,7 @@ window.exportPendingToExcel = function() {
   });
 
   if (data.length === 0) {
-    alert('No pending designs to export.');
+    alert(`No pending designs to export${category !== 'all' ? ` for ${category}` : ''}.`);
     return;
   }
 
@@ -1771,7 +2512,8 @@ window.exportPendingToExcel = function() {
   // Sheet 1: Prices
   const ws1 = XLSX.utils.json_to_sheet(data);
   ws1['!cols'] = [{ wch: 22 }];
-  XLSX.utils.book_append_sheet(wb, ws1, "Pending Designs");
+  const sheetTitle = category === 'all' ? "Pending Designs" : `Pending ${category.toUpperCase()}`;
+  XLSX.utils.book_append_sheet(wb, ws1, sheetTitle);
 
   // Sheet 2: Links/Notes
   if (notesData.length > 0) {
@@ -1779,17 +2521,17 @@ window.exportPendingToExcel = function() {
     ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   } else {
-    // If no links exist, add an empty sheet with headers just in case
-    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": ""}]);
+    const ws2 = XLSX.utils.json_to_sheet([{ "Design Name / No.": "-", "Platform": "-", "Link": "" }]);
     ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   }
 
-  XLSX.writeFile(wb, "Pending_Designs.xlsx");
+  const filename = category === 'all' ? "Pending_Designs.xlsx" : `Pending_Designs_${category.charAt(0).toUpperCase() + category.slice(1)}.xlsx`;
+  XLSX.writeFile(wb, filename);
 };
 
 // Export Completed Designs to Excel
-window.exportCompletedToExcel = function() {
+window.exportCompletedToExcel = function () {
   if (typeof XLSX === 'undefined') {
     alert("Excel library is still loading or failed to load. Please try again in a moment.");
     return;
@@ -1797,15 +2539,18 @@ window.exportCompletedToExcel = function() {
 
   const completedTerm = searchCompleted.value.toLowerCase();
   const isPlatformUser = currentUser && currentUser.role === 'platform';
+  const category = completedActiveCategory || 'all';
 
   const completed = designs.filter(d => {
     if (!d.platforms) return false;
     const matchesSearch = d.sku.toLowerCase().includes(completedTerm) || d.description.toLowerCase().includes(completedTerm);
-    if (isPlatformUser) {
-      return d.platforms.some(p => (currentUser.permissions?.platforms || []).includes(p.name) && p.status === 'completed') && matchesSearch;
-    } else {
-      return d.platforms.some(p => p.status === 'completed') && matchesSearch;
-    }
+    if (!matchesSearch) return false;
+
+    return d.platforms.some(p => {
+      const allowedByUser = !isPlatformUser || (currentUser.permissions?.platforms || []).includes(p.name);
+      const matchesCat = category === 'all' || getPlatformCategory(p.name) === category;
+      return allowedByUser && matchesCat && p.status === 'completed';
+    });
   });
 
   const data = [];
@@ -1816,10 +2561,13 @@ window.exportCompletedToExcel = function() {
     if (isPlatformUser) {
       relevantPlatforms = d.platforms.filter(p => (currentUser.permissions?.platforms || []).includes(p.name));
     }
-    
+    if (category !== 'all') {
+      relevantPlatforms = relevantPlatforms.filter(p => getPlatformCategory(p.name) === category);
+    }
+
     // Only include platforms that are actually completed
     relevantPlatforms = relevantPlatforms.filter(p => p.status === 'completed');
-    
+
     // Create a row object starting with the Design ID for Sheet 1
     const row = {
       "Design Name / No.": d.sku
@@ -1829,8 +2577,8 @@ window.exportCompletedToExcel = function() {
       // Add each platform as a separate column, and its value as the price
       relevantPlatforms.forEach(p => {
         row[p.name] = p.price || 0;
-        
-        // Collect links/notes for Sheet 2 (include all completed platforms, even if link is empty)
+
+        // Collect links/notes for Sheet 2
         notesData.push({
           "Design Name / No.": d.sku,
           "Platform": p.name,
@@ -1849,7 +2597,7 @@ window.exportCompletedToExcel = function() {
   });
 
   if (data.length === 0) {
-    alert('No completed designs to export.');
+    alert(`No completed designs to export${category !== 'all' ? ` for ${category}` : ''}.`);
     return;
   }
 
@@ -1858,7 +2606,8 @@ window.exportCompletedToExcel = function() {
   // Sheet 1: Prices
   const ws1 = XLSX.utils.json_to_sheet(data);
   ws1['!cols'] = [{ wch: 22 }];
-  XLSX.utils.book_append_sheet(wb, ws1, "Completed Designs");
+  const sheetTitle = category === 'all' ? "Completed Designs" : `Completed ${category.toUpperCase()}`;
+  XLSX.utils.book_append_sheet(wb, ws1, sheetTitle);
 
   // Sheet 2: Links/Notes
   if (notesData.length > 0) {
@@ -1866,13 +2615,13 @@ window.exportCompletedToExcel = function() {
     ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   } else {
-    // If no links exist, add an empty sheet with headers just in case
-    const ws2 = XLSX.utils.json_to_sheet([{"Design Name / No.": "-", "Platform": "-", "Link": ""}]);
+    const ws2 = XLSX.utils.json_to_sheet([{ "Design Name / No.": "-", "Platform": "-", "Link": "" }]);
     ws2['!cols'] = [{ wch: 22 }, { wch: 18 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Links");
   }
 
-  XLSX.writeFile(wb, "Completed_Designs.xlsx");
+  const filename = category === 'all' ? "Completed_Designs.xlsx" : `Completed_Designs_${category.charAt(0).toUpperCase() + category.slice(1)}.xlsx`;
+  XLSX.writeFile(wb, filename);
 };
 
 // ==========================================
@@ -1881,13 +2630,13 @@ window.exportCompletedToExcel = function() {
 
 let parsedExcelEntries = [];
 
-window.openExcelUploadModal = function() {
+window.openExcelUploadModal = function () {
   const modal = document.getElementById('excelUploadModal');
   const fileInput = document.getElementById('excelFileInput');
   const fileNameDisplay = document.getElementById('excelSelectedFileName');
   const previewContainer = document.getElementById('excelPreviewContainer');
   const submitBtn = document.getElementById('excelImportSubmitBtn');
-  
+
   if (!modal) return;
 
   // Reset states
@@ -1904,7 +2653,7 @@ window.openExcelUploadModal = function() {
   const dropZone = document.getElementById('excelDropZone');
   if (dropZone && !dropZone.dataset.dndReady) {
     dropZone.dataset.dndReady = 'true';
-    
+
     ['dragenter', 'dragover'].forEach(eventName => {
       dropZone.addEventListener(eventName, (e) => {
         e.preventDefault();
@@ -1934,14 +2683,14 @@ window.openExcelUploadModal = function() {
   lucide.createIcons();
 };
 
-window.closeExcelUploadModal = function() {
+window.closeExcelUploadModal = function () {
   const modal = document.getElementById('excelUploadModal');
   if (modal) modal.classList.remove('active');
   parsedExcelEntries = [];
 };
 
 // Download Sample Template for User
-window.downloadSampleExcelTemplate = function() {
+window.downloadSampleExcelTemplate = function () {
   if (typeof XLSX === 'undefined') {
     alert("Excel library is loading or failed to load. Please try again.");
     return;
@@ -1998,21 +2747,21 @@ window.downloadSampleExcelTemplate = function() {
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.json_to_sheet(sampleFlat);
   XLSX.utils.book_append_sheet(wb, ws1, "Designs & Links");
-  
+
   const ws2 = XLSX.utils.json_to_sheet(sampleMulti);
   XLSX.utils.book_append_sheet(wb, ws2, "Multi-Platform Prices");
 
   XLSX.writeFile(wb, "Design_Import_Template.xlsx");
 };
 
-window.handleExcelFileSelect = function(e) {
+window.handleExcelFileSelect = function (e) {
   const file = e.target.files[0];
   if (file) {
     handleExcelFileUpload(file);
   }
 };
 
-window.handleExcelFileUpload = function(file) {
+window.handleExcelFileUpload = function (file) {
   if (typeof XLSX === 'undefined') {
     alert("Excel library is still loading. Please try again.");
     return;
@@ -2026,11 +2775,11 @@ window.handleExcelFileUpload = function(file) {
 
   const reader = new FileReader();
 
-  reader.onload = function(e) {
+  reader.onload = function (e) {
     try {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-      
+
       processExcelWorkbook(workbook);
     } catch (err) {
       console.error("Failed to parse Excel file:", err);
@@ -2067,9 +2816,9 @@ function isHeaderOrPlaceholderSku(sku) {
 function isLinkValue(val) {
   if (!val || typeof val !== 'string') return false;
   const v = val.trim().toLowerCase();
-  return v.startsWith('http://') || v.startsWith('https://') || v.startsWith('www.') || 
-         v.includes('.com') || v.includes('.in') || v.includes('.org') || v.includes('.net') || 
-         v.includes('.co') || v.includes('/') || v.length > 15;
+  return v.startsWith('http://') || v.startsWith('https://') || v.startsWith('www.') ||
+    v.includes('.com') || v.includes('.in') || v.includes('.org') || v.includes('.net') ||
+    v.includes('.co') || v.includes('/') || v.length > 15;
 }
 
 // Helper to extract clean price
@@ -2125,11 +2874,11 @@ function resolvePlatformName(rawName) {
   let h = String(rawName).replace(/\u00A0/g, ' ').trim();
   const cleaned = h.replace(/[-_ ]*(link|url|note|notes|listing|website link|portal link|rate|price|mrp)[-_ ]*/gi, '').trim();
   const target = (cleaned || h).toLowerCase();
-  
+
   if (PLATFORM_ALIASES[target]) {
     return PLATFORM_ALIASES[target];
   }
-  
+
   const norm = normalizeKeyStr(target);
   for (const [alias, canonical] of Object.entries(PLATFORM_ALIASES)) {
     if (normalizeKeyStr(alias) === norm) {
@@ -2152,7 +2901,7 @@ function findDesignBySku(sku) {
   if (!rawSku || isHeaderOrPlaceholderSku(rawSku)) return null;
 
   const clean = rawSku.toLowerCase();
-  
+
   // 1. Exact case-insensitive match
   let found = designs.find(d => d && d.sku && d.sku.trim().toLowerCase() === clean);
   if (found) return found;
@@ -2261,10 +3010,10 @@ function identifyColumns(allHeaders) {
   // PRIORITY 1: High confidence SKU / Design columns
   for (const h of allHeaders) {
     const lower = h.trim().toLowerCase();
-    if (lower.includes('design') || lower.includes('sku') || lower.includes('d.no') || 
-        lower.includes('dno') || lower.includes('style') || lower.includes('art no') || 
-        lower.includes('article') || lower.includes('item code') || lower.includes('product code') || 
-        lower.includes('pattern') || lower.includes('catalog')) {
+    if (lower.includes('design') || lower.includes('sku') || lower.includes('d.no') ||
+      lower.includes('dno') || lower.includes('style') || lower.includes('art no') ||
+      lower.includes('article') || lower.includes('item code') || lower.includes('product code') ||
+      lower.includes('pattern') || lower.includes('catalog')) {
       skuKey = h;
       break;
     }
@@ -2301,20 +3050,20 @@ function identifyColumns(allHeaders) {
     const lower = h.trim().toLowerCase();
 
     // Platform
-    if (!platformKey && (lower === 'platform' || lower === 'plateform' || lower === 'platfrom' || 
-        lower === 'portal' || lower === 'channel' || lower === 'marketplace' || lower === 'site' || 
-        lower === 'platform name' || lower === 'plateform name')) {
+    if (!platformKey && (lower === 'platform' || lower === 'plateform' || lower === 'platfrom' ||
+      lower === 'portal' || lower === 'channel' || lower === 'marketplace' || lower === 'site' ||
+      lower === 'platform name' || lower === 'plateform name')) {
       platformKey = h;
     }
     // Link / URL
-    else if (!linkKey && (lower === 'link' || lower === 'url' || lower === 'note' || lower === 'notes' || 
-             lower === 'web link' || lower === 'product link' || lower === 'listing link' || 
-             lower === 'listing' || lower === 'href' || lower.includes('link') || lower.includes('url'))) {
+    else if (!linkKey && (lower === 'link' || lower === 'url' || lower === 'note' || lower === 'notes' ||
+      lower === 'web link' || lower === 'product link' || lower === 'listing link' ||
+      lower === 'listing' || lower === 'href' || lower.includes('link') || lower.includes('url'))) {
       linkKey = h;
     }
     // Price
-    else if (!priceKey && (lower.includes('price') || lower.includes('rate') || lower.includes('amount') || 
-             lower.includes('cost') || lower.includes('mrp') || lower === 'sp')) {
+    else if (!priceKey && (lower.includes('price') || lower.includes('rate') || lower.includes('amount') ||
+      lower.includes('cost') || lower.includes('mrp') || lower === 'sp')) {
       priceKey = h;
     }
     // Status
@@ -2330,7 +3079,7 @@ function identifyColumns(allHeaders) {
 function processExcelWorkbook(workbook) {
   parsedExcelEntries = [];
   const defaultPlatform = (currentUser && currentUser.role === 'platform' && currentUser.permissions?.platforms?.[0]) || (platforms[0] || 'vender');
-  
+
   const sheetNames = workbook.SheetNames;
   if (!sheetNames || sheetNames.length === 0) {
     alert("The uploaded Excel workbook contains no sheets.");
@@ -2342,7 +3091,7 @@ function processExcelWorkbook(workbook) {
   function getOrInitEntry(sku, platform) {
     const cleanSku = cleanSkuString(sku);
     if (!cleanSku || isHeaderOrPlaceholderSku(cleanSku)) return null;
-    
+
     const resolvedPlat = resolvePlatformName(platform) || defaultPlatform;
     const normSku = normalizeKeyStr(cleanSku);
     const normPlat = normalizeKeyStr(resolvedPlat);
@@ -2520,20 +3269,20 @@ function renderExcelPreview() {
           </span>
         </td>
         <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          ${hasLink 
-            ? `<a href="${item.link}" target="_blank" style="color: #15803d; font-weight: 600; text-decoration: underline;" title="${item.link}"><i data-lucide="external-link" style="width: 12px; height: 12px; display: inline;"></i> ${item.link}</a>` 
-            : `<span style="color: #94a3b8; font-style: italic; font-size: 0.8rem;">No Link (Pending)</span>`
-          }
+          ${hasLink
+        ? `<a href="${item.link}" target="_blank" style="color: #15803d; font-weight: 600; text-decoration: underline;" title="${item.link}"><i data-lucide="external-link" style="width: 12px; height: 12px; display: inline;"></i> ${item.link}</a>`
+        : `<span style="color: #94a3b8; font-style: italic; font-size: 0.8rem;">No Link (Pending)</span>`
+      }
         </td>
         <td style="font-weight: 600;">₹${item.price || '1'}</td>
         <td>
           ${hasLink
-            ? `<span style="display: inline-flex; align-items: center; gap: 3px; background: #dcfce7; color: #15803d; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 700;"><i data-lucide="check-circle-2" style="width: 11px; height: 11px;"></i> Link Ready</span>`
-            : (isExisting 
-                ? `<span class="badge-action-update"><i data-lucide="refresh-cw" style="width: 11px; height: 11px; display: inline;"></i> Update SKU</span>`
-                : `<span class="badge-action-new"><i data-lucide="plus" style="width: 11px; height: 11px; display: inline;"></i> New Design</span>`
-              )
-          }
+        ? `<span style="display: inline-flex; align-items: center; gap: 3px; background: #dcfce7; color: #15803d; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 700;"><i data-lucide="check-circle-2" style="width: 11px; height: 11px;"></i> Link Ready</span>`
+        : (isExisting
+          ? `<span class="badge-action-update"><i data-lucide="refresh-cw" style="width: 11px; height: 11px; display: inline;"></i> Update SKU</span>`
+          : `<span class="badge-action-new"><i data-lucide="plus" style="width: 11px; height: 11px; display: inline;"></i> New Design</span>`
+        )
+      }
         </td>
       </tr>
     `;
@@ -2541,10 +3290,10 @@ function renderExcelPreview() {
 
   tbody.innerHTML = rowsHtml;
   rowCountEl.innerText = parsedExcelEntries.length;
-  
+
   const withoutLinksCount = parsedExcelEntries.length - withLinksCount;
   statsEl.innerHTML = `<span style="color: #15803d; font-weight: 800; font-size: 0.85rem;"><i data-lucide="link" style="width: 13px; height: 13px; display: inline;"></i> ${withLinksCount} Links Ready to Sync</span> &bull; <span style="color: #64748b; font-size: 0.8rem;">${withoutLinksCount} Pending (No link)</span> &bull; <span style="color: #0284c7; font-weight: 700; font-size: 0.8rem;">${updateCount} to Update</span>`;
-  
+
   previewContainer.style.display = 'block';
   if (submitBtn) {
     submitBtn.disabled = false;
@@ -2555,7 +3304,7 @@ function renderExcelPreview() {
 }
 
 // Execute Import and Save (with collision-free ID generation)
-window.executeExcelImport = async function() {
+window.executeExcelImport = async function () {
   if (!parsedExcelEntries || parsedExcelEntries.length === 0) {
     alert("No data to import.");
     return;
@@ -2584,6 +3333,7 @@ window.executeExcelImport = async function() {
         const resolved = resolvePlatformName(entry.platform);
         if (!platforms.some(p => p.toLowerCase() === resolved.toLowerCase() || normalizeKeyStr(p) === normalizeKeyStr(resolved))) {
           platforms.push(resolved);
+          platformCategories[resolved] = getPlatformCategory(resolved);
           newPlatformsAdded++;
         }
       }
@@ -2665,7 +3415,7 @@ window.executeExcelImport = async function() {
           });
           const hasLink = matchedEntry && matchedEntry.link && matchedEntry.link.trim() !== '';
           const explicitStatus = matchedEntry ? matchedEntry.status : '';
-          
+
           let status = 'pending';
           if (explicitStatus) {
             status = explicitStatus;
